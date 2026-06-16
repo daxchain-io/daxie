@@ -4,8 +4,8 @@
 // and its own render subpackage — never a provider (the arch matrix enforces
 // this as a failing test). Business logic physically cannot live here.
 //
-// One file per noun grows later (tx.go, wallet.go, …); M0 ships only the four
-// scaffold commands: version, completion, config, convert.
+// One file per noun (tx.go lands later); M0 shipped version/completion/config/
+// convert, and M1 adds wallet, account, and keystore (one file per noun).
 package cli
 
 import (
@@ -58,6 +58,9 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newCompletionCmd(),
 		newConfigCmd(ctx, rs),
 		newConvertCmd(ctx, rs),
+		newWalletCmd(ctx, rs),   // M1
+		newAccountCmd(ctx, rs),  // M1
+		newKeystoreCmd(ctx, rs), // M1
 	)
 
 	return root

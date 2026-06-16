@@ -1,7 +1,10 @@
 package secret
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -148,4 +151,33 @@ func TestEmptyBytes(t *testing.T) {
 		t.Errorf("empty Len() = %d", b.Len())
 	}
 	b.Zero() // no-op, no panic
+}
+
+// TestLogValueRedacts asserts the §3.10 slog.LogValuer contract: a slog record
+// carrying a *Bytes redacts to the placeholder and never surfaces the secret (or
+// the struct it lives in). Without LogValue, slog would reflect into the value
+// and could expose the unexported backing slice.
+func TestLogValueRedacts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	pass := NewString("super-secret-passphrase")
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "auth",
+		slog.Any("pass", pass))
+
+	out := buf.String()
+	if strings.Contains(out, "super-secret-passphrase") {
+		t.Fatalf("slog leaked the secret: %q", out)
+	}
+	if !strings.Contains(out, redactedPlaceholder) {
+		t.Fatalf("slog output %q, want the redaction placeholder %q", out, redactedPlaceholder)
+	}
+}
+
+// TestLogValueMethod asserts the method returns the exact placeholder string.
+func TestLogValueMethod(t *testing.T) {
+	b := NewString("hunter2")
+	if got := b.LogValue().String(); got != redactedPlaceholder {
+		t.Fatalf("LogValue() = %q, want %q", got, redactedPlaceholder)
+	}
 }

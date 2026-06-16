@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/daxchain-io/daxie/internal/config"
+	"github.com/daxchain-io/daxie/internal/domain"
+	"github.com/daxchain-io/daxie/internal/keys"
 )
 
 // Service is the composed daxie core. ONE per process for the CLI and the stdio
@@ -32,10 +34,34 @@ type Service struct {
 	// structural change.
 	clock func() time.Time
 
-	// Later milestones add: signer domain.Signer; chains ChainProvider;
-	// policy *policy.Engine; journal *journal.Journal; tokens/nfts/contacts
-	// *registry.*; ens *ens.Resolver; erc erc.Ops; fees FeeStrategy. They are
-	// absent in M0 by design — no provider code is written yet.
+	// keys is the keystore provider (M1, §3): wallets, accounts, the verifier,
+	// the change-passphrase protocol, the domain.Signer adapter. It is opened
+	// LAZILY-but-eagerly here: keys.Open provisions nothing for a fresh install
+	// (Initialized()==false) and runs change-passphrase crash recovery + the
+	// derivation-watermark check under the index.lock, so a corrupt or
+	// mid-rotation keystore fails fast at Open (§3.8). It is nil only if keys.Open
+	// itself errors, which Open surfaces.
+	keys *keys.Store
+
+	// signer is the domain.Signer adapter over keys (§3.12), constructed once in
+	// Open. M1 builds it (so the seam is real and tested) even though no M1
+	// command signs; M3 (tx) is the first caller.
+	signer domain.Signer
+
+	// account is the §7.7 default-account override (--from/--account>DAXIE_ACCOUNT),
+	// resolved by the frontend and threaded so use cases that take an active
+	// account fall through flag>env>meta.json.
+	account string
+
+	// secretIO holds the host primitives secret.Acquire needs (stdin, env lookup,
+	// TTY check). The core uses them to resolve passphrases/mnemonics/keys WITHOUT
+	// importing os (§2.3); the cli frontend fills them in Options.Secret.
+	secretIO SecretIO
+
+	// Later milestones add: chains ChainProvider; policy *policy.Engine;
+	// journal *journal.Journal; tokens/nfts/contacts *registry.*; ens
+	// *ens.Resolver; erc erc.Ops; fees FeeStrategy. They are absent before their
+	// milestone by design.
 }
 
 // Open composes the service from resolved options.
@@ -65,17 +91,48 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		return nil, err
 	}
 
+	// Open the keystore provider. keys.Open is lazy for a fresh install (it
+	// provisions nothing and reports Initialized()==false) but runs the §3.8
+	// change-passphrase crash recovery and the §3.3 derivation-watermark check
+	// under the exclusive index.lock, so a mid-rotation or restore-coupled
+	// keystore fails fast HERE (keystore.derivation_watermark → exit 11) rather
+	// than mid-command. The light KDF is honored only when the manifest was
+	// created light (§3.4); the gate is read via the injected env lookup so the
+	// core never touches os (§2.3).
+	light := false
+	if opts.Secret.LookupEnv != nil {
+		if v, ok := opts.Secret.LookupEnv("DAXIE_KDF_LIGHT"); ok && v != "" && v != "0" {
+			light = true
+		}
+	}
+	ks, err := keys.Open(ctx, keys.Options{
+		Dir:   paths.Keystore,
+		Clock: clock,
+		Light: light,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &Service{
-		cfg:   cfg,
-		paths: paths,
-		clock: clock,
+		cfg:      cfg,
+		paths:    paths,
+		clock:    clock,
+		keys:     ks,
+		signer:   ks.Signer(),
+		account:  opts.Account,
+		secretIO: opts.Secret,
 	}, nil
 }
 
-// Close flushes durable state and releases file locks. In M0 it holds no such
-// state, so Close is a safe no-op; it is idempotent and never errors. Wiring it
-// from the start means SIGTERM-driven shutdown (§2.4) needs no later change.
+// Close flushes durable state and releases file locks. M1 closes the keystore
+// (releasing any held index.lock). It is idempotent and never errors fatally;
+// wiring it from the start means SIGTERM-driven shutdown (§2.4) needs no later
+// change.
 func (s *Service) Close() error {
+	if s.keys != nil {
+		return s.keys.Close()
+	}
 	return nil
 }
 

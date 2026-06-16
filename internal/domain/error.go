@@ -135,6 +135,14 @@ const (
 	CodeConfigSchemaUnsupported = "config.schema_unsupported" // exit 2 (newer major)
 	CodeSecretUnresolved        = "secret.unresolved"         // exit 2 (bad/missing secret ref)
 	CodeStateLockTimeout        = "state.lock_timeout"        // exit 11 (lock contention)
+	// CodeKeystoreReadOnly is a write attempt against a read-only keystore (§3.3).
+	CodeKeystoreReadOnly = "keystore.read_only" // exit 10
+	// CodeKeystorePermsInsecure is an insecure keystore/secret file-perm tripwire (§3.11).
+	CodeKeystorePermsInsecure = "keystore.perms_insecure" // exit 12
+	// CodeKeystoreDerivationWatermark is the §3.3 fail-closed tripwire: a meta.json
+	// next_index that sits BELOW a materialized HD index — the restore-coupling /
+	// state-corruption guard that refuses to reuse a derivation slot. State class.
+	CodeKeystoreDerivationWatermark = "keystore.derivation_watermark" // exit 11
 )
 
 // codeExit is the (prefix -> exit) registry, highest-specificity wins. The key
@@ -199,6 +207,9 @@ var codeExit = map[string]ExitCode{
 	// 11 — STATE
 	"state.lock_timeout": ExitState,
 	"state.corrupt":      ExitState,
+	// derivation watermark below a materialized index: a restore-coupling /
+	// state-corruption tripwire that fails closed rather than reuse an HD slot (§3.3).
+	"keystore.derivation_watermark": ExitState,
 
 	// 12 — INTEGRITY (tamper/misconfig tripwires, §5.7 row 12)
 	"rpc.chain_id_mismatch":            ExitIntegrity,

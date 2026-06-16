@@ -8,8 +8,11 @@
 // in service or a frontend. The §2.3 determinism guard does not apply here.
 package secret
 
-// redactedPlaceholder is what MarshalJSON emits — a fixed string, never the
-// length, so a marshaled struct containing a *Bytes leaks nothing.
+import "log/slog"
+
+// redactedPlaceholder is what MarshalJSON and LogValue emit — a fixed string,
+// never the length, so a marshaled or logged struct containing a *Bytes leaks
+// nothing.
 const redactedPlaceholder = "<redacted>"
 
 // Bytes is a secret buffer. The raw value is reachable only via Reveal(); every
@@ -99,6 +102,23 @@ func (b *Bytes) GoString() string { return b.String() }
 func (b *Bytes) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + redactedPlaceholder + `"`), nil
 }
+
+// LogValue makes *Bytes a slog.LogValuer (§3.10): an accidental
+// slog.Any("pass", buf) / logger.Info(..., "pass", buf) is routed through this
+// redacting value rather than slog reflecting into the struct (which could
+// surface the unexported backing slice). It returns the fixed placeholder, never
+// the length, so a logged secret leaks nothing. This is the structured-logging
+// analogue of String/MarshalJSON; M11 `mcp serve` (structured slog to stderr)
+// relies on it.
+func (b *Bytes) LogValue() slog.Value {
+	return slog.StringValue(redactedPlaceholder)
+}
+
+// Compile-time assertions that *Bytes satisfies the full §3.10 redaction
+// contract: fmt.Stringer, fmt.GoStringer, json.Marshaler, and slog.LogValuer.
+var (
+	_ slog.LogValuer = (*Bytes)(nil)
+)
 
 // itoa is a tiny non-allocating-ish integer formatter to avoid pulling strconv
 // into the redaction path (keeps the surface minimal).

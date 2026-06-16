@@ -12,7 +12,12 @@ import (
 
 // openTemp creates the temp file with O_EXCL and FILE_SHARE_DELETE so a reader
 // holding it open does not block the subsequent rename, and the temp can be
-// renamed/deleted while a handle is live (§7.9).
+// renamed/deleted while a handle is live (§7.9). It applies an OWNER-ONLY DACL at
+// creation via a SecurityAttributes (§3.11): the new secret file gets an explicit
+// owner-only DACL from birth rather than inheriting a possibly-permissive parent
+// DACL, so it never transits a BUILTIN\Users/Everyone-readable state. The DACL
+// survives the rename onto the destination (rename preserves the source's explicit
+// ACL), so the final secret file is owner-only too.
 func openTemp(path string, mode os.FileMode) (*os.File, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -20,11 +25,20 @@ func openTemp(path string, mode os.FileMode) (*os.File, error) {
 	}
 	access := uint32(windows.GENERIC_READ | windows.GENERIC_WRITE)
 	share := uint32(windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE)
+
+	// Owner-only DACL at creation. If we cannot build it (unusual: token read
+	// failure), fall back to a nil SA (inherited DACL) rather than failing the
+	// write — the read-time CheckPerms tripwire still guards exposure.
+	var sa *windows.SecurityAttributes
+	if got, serr := ownerOnlySecurityAttributes(); serr == nil {
+		sa = got
+	}
+
 	h, err := windows.CreateFile(
 		p,
 		access,
 		share,
-		nil,
+		sa,
 		windows.CREATE_NEW, // O_EXCL: fail if it exists
 		windows.FILE_ATTRIBUTE_NORMAL,
 		0,

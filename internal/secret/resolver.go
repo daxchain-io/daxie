@@ -73,6 +73,12 @@ type Request struct {
 	// ReadFile, if non-nil, reads a file's bytes. Defaults to os.ReadFile when
 	// nil. Injectable so the resolver can be unit-tested without touching disk.
 	ReadFile func(path string) ([]byte, error)
+	// Prompt, if non-nil, reads one secret interactively from the terminal with
+	// the given label (the host TTY primitive). Defaults to the package terminal
+	// reader when nil. The cli frontend injects secret.TTYPrompt; tests inject a
+	// stub so the interactive prompt branch (and the §3.3 first-init double-entry)
+	// is exercised without a real terminal.
+	Prompt func(label string) ([]byte, error)
 }
 
 // Acquire applies the §3.6 precedence (stdin > file > *_FILE-env > env > prompt)
@@ -143,7 +149,11 @@ func Acquire(req Request, r io.Reader, lookupEnv func(string) (string, bool), is
 
 	// 5. interactive prompt — only at a TTY.
 	if isTTY != nil && isTTY() {
-		pw, err := promptFunc(req.PromptLabel)
+		prompt := req.Prompt
+		if prompt == nil {
+			prompt = promptFunc
+		}
+		pw, err := prompt(req.PromptLabel)
 		if err != nil {
 			return nil, SourceNone, domain.Newf("keystore.prompt_failed", "failed to read secret from terminal: %v", err)
 		}

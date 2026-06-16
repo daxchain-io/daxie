@@ -19,6 +19,13 @@ type FlagValues struct {
 	Keystore string // --keystore: keystore dir
 	StateDir string // --state-dir: mutable state dir
 	Yes      bool   // --yes: skip confirmations (required for mutating ops non-interactively)
+
+	// Account is the §7.7 active-account override (--from/--account). M1 binds no
+	// command-level --from yet (its first consumer is tx, M3); open.go fills the
+	// service Account slot from this plus DAXIE_ACCOUNT so the default-account
+	// precedence (flag>env>meta.json) is wired from M1. Empty in M1 unless
+	// DAXIE_ACCOUNT is set.
+	Account string
 }
 
 // ServiceOptions projects the path/network subset (plus a clock the caller fills)
