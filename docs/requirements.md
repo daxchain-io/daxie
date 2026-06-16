@@ -135,7 +135,17 @@ Daxie is **agent-first**. Its audiences, in priority order:
 - **[DECIDED]** **ERC-20 approvals**: `daxie token
   approve|allowance|revoke`. Approvals are spend-equivalents: they count
   against policy guardrails, spenders must pass the allowlist, and
-  unlimited approvals require explicit `--unlimited --yes`.
+  unlimited approvals require explicit `--unlimited --yes`. *(Amended at
+  design time — v1 spend limits are ETH-denominated (native value + gas
+  only; there is no price oracle in v1), so token/NFT amounts are not
+  converted against them: "count against policy guardrails" is delivered
+  via the spender/destination allowlist, gas accrual, the gas cap, and
+  the `--unlimited --yes` ceremony. To keep that fail-closed, token
+  transfers and approvals are refused when spend limits are configured
+  but no allowlist is, unless the operator explicitly acknowledges the
+  gap under the admin passphrase; per-asset limits are the deferred item
+  that closes the gap. Supersession recorded in the Open Questions Log,
+  #2.)*
 - **[DECIDED]** **Ergonomics**: default account (`daxie account use` /
   `DAXIE_ACCOUNT`) making `--from`/`--account` optional; **positional
   name arguments** (`daxie wallet create treasury`, not `--name`);
@@ -148,7 +158,10 @@ Daxie is **agent-first**. Its audiences, in priority order:
   arrival reaches the confirmation target. `--new` derives a fresh
   receiving address (invoice-style) and prints it before blocking. With
   `--json` it emits a line-delimited event stream (listening → detected →
-  confirmed). Detection: `Transfer` logs for tokens/NFTs; balance/block
+  confirming → confirmed *(per inbound transfer)* → complete *(terminal,
+  carries exit code)*; agents wait on the terminal `complete` line, not a
+  final `confirmed` — design-session refinement of the original
+  listening→detected→confirmed sketch). Detection: `Transfer` logs for tokens/NFTs; balance/block
   polling for plain ETH (no logs exist), upgradable to WebSocket
   subscriptions. Completes the agent-to-agent payment loop.
 
@@ -164,9 +177,20 @@ This is the highest-stakes section of the design. The design must address:
   into later.
 - **[DECIDED]** v1 ships **basic agent guardrails**: per-transaction and
   per-day spend limits plus an optional destination allowlist, enforced
-  locally by the wallet before signing and configured via Viper. A fuller
-  policy engine (rate limits, time windows, per-asset rules, approval
-  webhooks) is a future layer; the design should leave room for it.
+  locally by the wallet before signing and configured via the
+  admin-authenticated `daxie policy` commands — the sealed policy file
+  lives outside Viper resolution by design (no config key or `DAXIE_*`
+  env var can set a limit; Viper's flags > env precedence would otherwise
+  let a compromised agent outvote the admin passphrase from its own
+  process environment). *(Amended at design time — this bullet originally
+  said "configured via Viper"; supersession recorded in the Open
+  Questions Log, #2.)* *(Further amended — limits are ETH-denominated,
+  native value + gas only; token/NFT spend paths must pass the allowlist
+  and fail closed when limits are set but no allowlist is configured: see
+  §4's approvals amendment and the Open Questions Log, #2.)* A fuller
+  policy engine (rate limits, time windows,
+  per-asset rules, approval webhooks) is a future layer; the design
+  should leave room for it.
 - **[DECIDED]** **Passphrase rotation**: `daxie keystore
   change-passphrase` re-encrypts the keystore under a new passphrase.
 - **[DECIDED]** Passphrase granularity: **one passphrase per keystore**
@@ -260,9 +284,19 @@ Requirements:
   agent pods** — policy administration happens out-of-band (operator
   workstation, one-off Job).
 - **[DECIDED]** **Policy file integrity:** the policy file is
-  MAC-sealed with a key derived from the admin passphrase, so editing it
-  directly on the volume (bypassing the CLI) is detected and signing
-  halts. The threat model must be explicit about the residual gap: spend
+  sealed under the admin passphrase, so editing it directly on the
+  volume (bypassing the CLI) is detected and signing halts. *(Amended at
+  design time — this bullet originally said "MAC-sealed with a key
+  derived from the admin passphrase". A symmetric MAC cannot deliver the
+  guarantee: any MAC key the agent-facing process can read to verify
+  with is a key a compromised agent can re-seal a tampered policy with.
+  The seal is an admin-passphrase-derived **Ed25519 signature**; agent
+  hosts verify against a public key pinned in operator-owned read-only
+  config (K8s ConfigMap; operator-owned file locally) — never in
+  agent-writable state and never bound to the keystore passphrase, which
+  the agent holds. Missing pin or missing/unverifiable policy file fails
+  closed. Supersession recorded in the Open Questions Log, #22.)* The
+  threat model must be explicit about the residual gap: spend
   *counters* are maintained by the agent-facing process and cannot be
   sealed the same way — true tamper-proof enforcement requires a
   privilege boundary (file ownership or a future signer daemon), which
@@ -345,7 +379,7 @@ Model the release pipeline on the **witwave `ww` client**
 | # | Question | Section | Status |
 |---|----------|---------|--------|
 | 1 | Custody model for v1 | §5 | **decided** — encrypted local keystore (BIP-39/44, geth-compatible) |
-| 2 | Agent signing policy controls | §5 | **decided** — basic guardrails in v1 (spend limits + allowlist) |
+| 2 | Agent signing policy controls | §5 | **decided** — basic guardrails in v1 (spend limits + allowlist). **Amended at design time:** limits are configured via the admin-authenticated `daxie policy` commands, not via Viper config/env — the original "configured via Viper" wording is superseded by #13 (admin secret) + #22 (sealed policy file); `daxie config get|set|list` excludes policy keys. **Further amended:** v1 limit denomination is ETH-only (native value + gas — no price oracle), so token/NFT amounts are never converted against the limits; token spend paths must pass the allowlist and **fail closed** (refuse) when limits are configured but no allowlist is, absent an explicit admin-acknowledged override — per-asset limits are the deferred item that closes the gap |
 | 3 | v1 networks | §2 | **decided** — mainnet + Sepolia presets, others via config |
 | 4 | v1 asset scope | §2 | **decided** — ETH + ERC-20 + ERC-721 + ERC-1155 |
 | 5 | RPC provider strategy | §6 | **decided** — public defaults + user-supplied RPC URLs |
@@ -365,7 +399,7 @@ Model the release pipeline on the **witwave `ww` client**
 | 19 | Confirmation waiting | §4 | **decided** — `--wait`/`--confirmations`/`--timeout` on all broadcasting commands; per-network defaults; distinct exit codes for confirmed/reverted/timeout |
 | 20 | Inbound receive command | §4 | **decided** — `daxie receive` blocks until funds/token/NFT arrive + confirm; `--new` derives a fresh invoice address; JSON event stream |
 | 21 | Gas handling | §4 | **decided** — cast-style estimation defaults + speed presets; explicit 1559 flags; policy-level gas caps; `tx speedup`/`tx cancel`; no blobs in v1 |
-| 22 | Container/K8s deployment | §7a | **decided** — four state classes with separate paths; crash-safe journal; durable spend counters; MAC-sealed policy file; OCI image; single-writer-per-account rule |
+| 22 | Container/K8s deployment | §7a | **decided** — four state classes with separate paths; crash-safe journal; durable spend counters; signature-sealed policy file (**amended at design time:** the original "MAC-sealed" wording is superseded — the seal is an admin-passphrase-derived Ed25519 signature verified against a verify-key pin in operator-owned read-only config; a MAC key readable by the agent host would be re-forgeable by a compromised agent, and so would any pubkey binding keyed by the keystore passphrase); OCI image; single-writer-per-account rule |
 | 23 | MCP network transport for K8s | §7a | **decided** — v1 is stdio-only; HTTP transport is the v1.1 fast-follow (with the Helm chart) |
 | 24 | Helm chart | §7a | **decided** — yes, but gated on HTTP transport (#23); v1 ships example manifests; chart deploys Daxie as a wallet/signing service with hardened defaults |
 | 25 | Token/NFT aliasing | §2/§4 | **decided** — registry names are local per-network aliases (anti-spoofing: never resolved via on-chain symbols); NFT collections + individual NFTs (`collection#id`) aliasable |

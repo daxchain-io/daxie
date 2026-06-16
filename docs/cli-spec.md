@@ -47,12 +47,20 @@ are therefore always unambiguous.
 
 Secrets (mnemonics, private keys, passphrases) are **never accepted as flag
 values** — flags leak into shell history and process listings. Accepted
-channels, in precedence order:
+channels, in precedence order (first present wins — *amended by the design
+session, see keys.md §6, superseding this draft's original
+prompt-first-at-TTY ordering*):
 
-1. Interactive prompt (default at a TTY; hidden input, mnemonic confirmed)
-2. stdin (`--mnemonic-stdin`, `--key-stdin`, `--passphrase-stdin`)
-3. File (`--mnemonic-file`, `--key-file`, `--passphrase-file`) — file perms checked
+1. stdin (`--mnemonic-stdin`, `--key-stdin`, `--passphrase-stdin`)
+2. File (`--mnemonic-file`, `--key-file`, `--passphrase-file`) — file perms checked
+3. `*_FILE` env (`DAXIE_PASSPHRASE_FILE` etc.) — the recommended unattended channel
 4. Env (`DAXIE_PASSPHRASE` etc.) — documented as the least-safe option, for agents
+5. Interactive prompt (fallback when stdin is a TTY and none of the above
+   is set; hidden input, mnemonic confirmed)
+
+Note the user-facing consequence: if `DAXIE_PASSPHRASE` (or `…_FILE`) is
+exported, it is used and you are **not** prompted, even at a TTY. Non-TTY
+invocations with no source set get a distinct error — never a hang.
 
 Two distinct secrets exist, deliberately:
 
@@ -244,8 +252,14 @@ daxie receive ... --qr                               # also render the receiving
   human can share it / an agent can pass it to the counterparty. With
   `--json`, output is a **line-delimited event stream** on stdout:
   `{"event":"listening","address":...}` → `{"event":"detected",...}` →
-  `{"event":"confirmed",...}`. (The single-object-on-stdout rule is
-  relaxed here by necessity — the address is needed up front.)
+  `{"event":"confirming",...}` → `{"event":"confirmed",...}` (one
+  **per confirmed inbound transfer**) → `{"event":"complete",...}` (the
+  **single terminal** success line, carrying the process `exit`). On
+  timeout the terminal line is `{"event":"timeout",...}` instead. (The
+  single-object-on-stdout rule is relaxed here by necessity — the address is
+  needed up front.) **Agents wait for the terminal `complete` line** (not a
+  final `confirmed`) as the success signal — see the design-session detail
+  in the transaction-pipeline design (`receive` NDJSON stream).
 - Confirmation counts follow the same per-network resolution as sends;
   the threshold is the reorg protection that makes "received" trustworthy.
 - Exit codes mirror `tx wait`: confirmed, vs. timed-out-still-listening
@@ -266,7 +280,9 @@ reference syntax is `<collection>#<tokenId>` — by alias or raw address —
 and `--nft` accepts any form anywhere.
 
 ```sh
-daxie nft add 0xnft... --name punks                  # register a collection (alias defaults to on-chain name)
+daxie nft add 0xnft... --name punks                  # register a collection (alias defaults to on-chain name,
+                                                     # case-folded — e.g. CryptoPunks → cryptopunks; names that
+                                                     # can't fold to a valid alias require --name)
 daxie nft alias punks#42 my-punk                     # alias one specific NFT
 daxie nft aliases                                    # list NFT aliases
 daxie nft list --account treasury/payroll            # owned NFTs across registered collections
@@ -295,12 +311,18 @@ local registry (or accepts a raw contract address); Daxie never matches a
 name against on-chain symbols. Registering defaults the alias to the
 contract's symbol for convenience, but the user can override it, and a
 collision with an existing alias must be resolved explicitly with `--name`.
-The registry is **per-network** (the same alias can map to different
-addresses on mainnet vs. an L2).
+Aliases are **stored lowercase and matched case-insensitively** —
+`daxie token add 0xa0b8...` stores the alias `usdc` and `--token USDC`
+resolves it; a symbol that can't fold to a valid alias (reserved chars
+like the `.` in `USDC.e`, other illegal chars, empty) is never silently
+mangled and requires an explicit `--name`. The registry is
+**per-network** (the same alias can map to different addresses on
+mainnet vs. an L2).
 
 ```sh
 daxie token info 0xa0b8...                           # name, symbol, decimals, type detection (read-only, no registration)
-daxie token add 0xa0b8...                            # register; alias defaults to on-chain symbol (here: USDC)
+daxie token add 0xa0b8...                            # register; alias defaults to on-chain symbol, case-folded
+                                                     # (here: USDC → stored as `usdc`; lookups are case-insensitive)
 daxie token add 0x2791... --name usdc-bridged        # explicit alias (required on collision)
 daxie token rename USDT tether
 daxie token list                                     # alias, address, type, network
@@ -314,8 +336,13 @@ daxie balance bot/0 --token usdc-bridged             # aliases work anywhere --t
 # unlimited approvals require an explicit --unlimited acknowledged by --yes.
 daxie token approve USDC --spender 0xdef... --amount 500
 daxie token approve USDC --spender 0xdef... --unlimited --yes
+daxie token approve USDC --spender 0xdef... --amount 500 \
+    --wait --confirmations 2 --timeout 5m            # approve/revoke broadcast, so they take
+                                                     # the same --wait/--confirmations/--timeout
+                                                     # as tx send / nft send (design-session extension)
 daxie token allowance USDC --owner bot/0 --spender 0xdef...
 daxie token revoke USDC --spender 0xdef...           # sugar for approve --amount 0
+daxie token revoke USDC --spender 0xdef... --wait    # wait flags apply here too
 ```
 
 ### `daxie sign` / `daxie verify` — gasless message signing
@@ -477,7 +504,10 @@ daxie mcp tools                                      # print the tool list/schem
 ```sh
 daxie version                                        # version, commit, build date
 daxie completion zsh|bash|fish
-daxie config get|set|list                            # Viper-backed settings
+daxie config get|set|list                            # Viper-backed settings. Policy keys are OUT OF SCOPE here:
+                                                     # spend limits/allowlist live in the sealed policy file, set
+                                                     # only via `daxie policy ...` (admin passphrase) — `config set
+                                                     # policy.max-tx` is rejected; inspect with `daxie policy show`
 daxie convert 1.5eth wei                             # unit conversion (eth/gwei/wei) — agents shouldn't do 10^18 math
 daxie convert 30000000000wei gwei
 ```
