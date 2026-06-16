@@ -1,0 +1,64 @@
+# Non-Go static checks: markdown, shell scripts, and the workflow files
+# themselves. Kept separate from ci.yml (the Go pipeline) so doc-only changes
+# get fast feedback without spinning up the Go matrix.
+#
+# Tooling is intentionally install-light and pinned the same way ci.yml pins
+# its tools:
+#   markdownlint - npx markdownlint-cli2 (Node is pre-installed on the runner;
+#                  rules live in .markdownlint-cli2.jsonc)
+#   shellcheck   - pre-installed on ubuntu-latest
+#   actionlint   - `go install` (mirrors ci.yml's go-arch-lint/govulncheck),
+#                  so no third-party action SHA to track
+# Only first-party actions (checkout, setup-go) are used; their SHAs match
+# ci.yml exactly (dependabot bumps them in one place to compare against).
+name: static
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: markdownlint-cli2
+        # Globs + rule config come from .markdownlint-cli2.jsonc at the repo root.
+        run: npx --yes markdownlint-cli2@0.22.1
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: shellcheck
+        # All tracked shell scripts (the milestone demos today; scripts/ later).
+        # find (not a bash globstar) keeps this portable and dist/-safe.
+        run: |
+          files="$(find . -name '*.sh' -not -path './dist/*')"
+          if [ -z "$files" ]; then echo "no shell scripts"; exit 0; fi
+          echo "$files"
+          echo "$files" | xargs shellcheck
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          "$(go env GOPATH)/bin/actionlint" -color

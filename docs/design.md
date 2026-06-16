@@ -119,7 +119,7 @@ seam; otherwise the struct stays concrete. Three commitments fall out, each just
 
 ### 2.1 Package tree
 
-```
+```text
 github.com/daxchain-io/daxie
 
 cmd/
@@ -268,7 +268,7 @@ API is a shippable library boundary the day the daemon lands.
 
 ### 2.2 Dependency rules — enforcing one core, two frontends
 
-```
+```text
             cmd/daxie
                 │
                 ▼
@@ -1048,7 +1048,7 @@ creation-time rejection cannot be airtight; the **authoritative** guard is the r
 `$DAXIE_KEYSTORE` is a **self-contained directory for key material**: `tar czf
 backup.tgz $DAXIE_KEYSTORE` under the lock is a complete key backup.
 
-```
+```text
 keystore/
 ├── keystore.json          # manifest: format version, KDF defaults, passphrase verifier
 ├── meta.json              # sidecar: names, aliases, HD index map, default account
@@ -1881,7 +1881,7 @@ possible:
 
 **Seal construction (`policyseal`):**
 
-```
+```text
 salt        = 32 random bytes, generated at first `policy set` (rotated by change-admin-passphrase)
 K_master    = scrypt(adminPassphrase, salt, N=2^17, r=8, p=1, dkLen=32)
 K_seed      = HKDF-SHA256(K_master, info="daxie/policy/sig-seed/v1", L=32)
@@ -2160,7 +2160,7 @@ the journal + nonce manager are `internal/journal`; the policy contract is §4's
 
 ### 5.1 Stage order (the critical section) and crash-safety
 
-```
+```text
 resolve intent ─► preview build (gas quote, ENS echo) ─► confirm (TTY) / --yes skip
    ─► acquire account lock ─► reconcile journal + derive nonce
    ─► build (gas engine: limit + fees)
@@ -2323,7 +2323,7 @@ config > built-in.
 Applies to `--wait` on **every** pipeline-routed broadcasting command and to `daxie tx
 wait`; all inherit the 10m default timeout.
 
-```
+```text
                      ┌───────────────────────────────────────────────┐
                      ▼                                               │
  signed ─► broadcast ─► pending ──► mined ──► confirmed (exit 0)     │
@@ -2740,7 +2740,7 @@ type EventSink func(Event)  // nil sink = no progress (the common fire-and-retur
 
 `daxie tx send --to vitalik.eth --amount 0.5 --wait --json --yes`:
 
-```
+```text
 cli/tx.go (~30 lines)
   • bind pflags/env/stdin → domain.TxRequest{From, To:"vitalik.eth", Amount:"0.5",
     Wait:{Enabled:true}, Confirm:true}
@@ -3693,7 +3693,7 @@ every residual to whether the daemon closes it.
 
 ### 8.1 Trust boundaries (v1)
 
-```
+```text
 ┌────────────────────────── agent trust domain (one uid) ────────────────────────────┐
 │  AI agent / MCP client ──stdio──► daxie mcp serve ─┐                                 │
 │  AI agent / human     ──exec───► daxie <cmd>      ─┤──► internal service             │
@@ -4305,7 +4305,7 @@ synthesis performed are marked **[reconcile]**.)
 
 | # | Decision | Rationale |
 |---|---|---|
-| **Delegated details (requirements asked the design session to decide)** ||
+| **Delegated details (requirements asked the design session to decide)** | | |
 | L1 | Default `--wait` timeout = **10m** for every broadcasting command + `tx wait`; **`receive` defaults to no timeout** | "block until paid" is `receive`'s contract; a 5m default would exit before most counterparties pay (§5). |
 | L2 | Per-network confirmation defaults: **mainnet 2, Sepolia 1, user-added 1** (flag > config > built-in) | mainnet reorg depth vs testnet/L2 speed; `safe`/`finalized` keywords reserved, not in v1 (§5.2). |
 | L3 | `--amount` matching: **cumulative-minimum default**, **`--exact` in v1** (per-tx-minimum deferred) | the agent-to-agent invoice loop needs both a "paid enough" and an "exact invoice" mode (§5). |
@@ -4320,7 +4320,7 @@ synthesis performed are marked **[reconcile]**.)
 | L12 | Per-platform paths: macOS mirrors Linux XDG; **state under `$XDG_STATE_HOME`**; Windows **config roams, keys do not** | terminal-first audience expects `~/.config`; a `tar` of the keystore dir stays a pure key backup; roaming profiles must never replicate keys (§7.3). |
 | L13 | `contract` ABI-arg syntax: **positional strings coerced by the ABI, parsed once in core** (§2.3); `address`-typed args accept account refs/contacts/ENS (resolved + echoed like any `--to`); **array/tuple literals** via `'[a,b,…]'`/`'(a,b,…)'` (JSON-subset, comma-separated, bracket/paren-delimited, double-quote escaping, type-directed recursive descent in `abi.ParseLiteral`); **large `uint` always in base units** (decimals are unknowable for an arbitrary param — `daxie convert` owns the 10^n math) | resolves cli-spec's first `[design session]` item; nested/multidim literals + named args are the §10.3-deferred ergonomics — v1 covers the staking/vault/governor 90% with literals + base-unit ints (cli-spec `daxie contract`). |
 | L14 | `contract` registry = **per-network alias + address + stored ABI**, `internal/registry`-owned, **state class**, alias-only resolution (never on-chain symbol) — the **same anti-spoofing model as the token/NFT registry** (§7.8), ABI stored inline, `v` 1→2; `contract add` fails the state read-only sibling of `config.read_only` (exit 10) on a read-only state mount; `internal/abi` is a new pure-Go (CGO-free) provider leaf wrapping go-ethereum `accounts/abi` (concrete, no second impl), and `contract send` reuses `service.SendTx`'s pipeline rather than a second one (the four read/pure verbs never reach `authorize`) | the registry is a security boundary, not convenience: a name resolving to an attacker ABI/address is the spoofing primitive the local-alias rule kills (requirements §2; §7.8); the leaf keeps the §4.2 recognizers' selector source pure and shared (§2.1). |
-| **Judgment calls (the design's own structural choices)** ||
+| **Judgment calls (the design's own structural choices)** | | |
 | J1 | The composition root is one composed **`service.Service`** with `Open`→use→`Close`; the privileged sequence is **concrete code (`authorize`), not an `Authorizer` interface** | the kernel already sits behind the service boundary; the v2 daemon relocation lands on `domain.Signer` + a policy proxy, so an `Authorizer` interface would have exactly one impl forever (§2.7, §2.1.1). |
 | J2 | Exactly **two** exported provider interfaces (`domain.Signer`, `chain.Client`); everything else concrete | an interface is justified only by a named second impl or a security test seam — minimizing interfaces concentrates the fake surface at `chain.Client` (§2.1.1, §2.9). |
 | J3 | `Principal` + `EventSink` threaded through every method in v1 (always `local` / often nil) | the HTTP frontend + auth add zero parameters to any method; one streaming seam serves stderr/NDJSON/MCP-progress/SSE (§2.4, §5.9). |
@@ -4335,7 +4335,7 @@ synthesis performed are marked **[reconcile]**.)
 | J12 | `policy reset --force` authenticates against the **anchor**, never `--yes` | the corrupt-file → reset-with-own-passphrase attack dies at authentication, on every deployment including laptops (§4.7). |
 | J13 | One error taxonomy (dotted `domain.Error.Code` strings), two thin renderings (CLI exit code + MCP tool-error envelope) | agents branch on identical-meaning codes across both frontends because they come from the same `error` values (§5.7, §6.6). |
 | J14 | MCP surface = **31 tools**: the four `contract` read/pure verbs + `contract_send` become tools; **`contract_add` + the contract-registry mutations/introspection are excluded** under the same alias-spoofing boundary as `token_add` (an alias binds an address **and** an ABI — a strictly larger spoofing primitive); the contract registry is **state-class**, co-located in `registry/<network>.json` with the ABI inline; a `contract send` journals as a normal signed tx (`kind:"contract-call"`, or the classified kind when the calldata is a recognized approve/transfer/permit) | requirements #29: `contract send` is a within-policy fund-mover bound to the typed ceremonies by the §4.2 raw-calldata classifier, so it belongs on the surface; the registry-add stays off because raw-address + inline ABI covers the transact path without the spoof path (§6.1, §7.8, §5.6). |
-| **Reconciliations the synthesis performed (to the Architecture, §2)** ||
+| **Reconciliations the synthesis performed (to the Architecture, §2)** | | |
 | D1 | Package/type names canonicalized: `core.Daxie`→`service.Service`, `core.Signer`/`signer.Signer`→`domain.Signer` (with `Unlocker`), `policy.Request`→`policy.Check`, `core.Err`→`domain.Error`, `core.Options`→`config.Options` | [reconcile] the Architecture (§2) is the named canonical naming authority; every provider part's `core.*` is mapped (§2.4, §2.6, §4). |
 | D2 | Secret type **`secret.Bytes`** (not `keys.Buffer`/`secret.Buffer`); durable-write/lock helper **`internal/fsx`** (not `internal/atomicfile` or journal-internal); seal package **`policyseal`** | [reconcile] the corpus converged on shared `fsx`/`secret` leaves — adopted as named packages so the Windows divergence + redaction live in one place each (§2.1). |
 | D3 | **Exit-code registry = the 0–12 table (§5.7)**, superseding the Architecture's §3.8 numeric enum: policy-denied = **3** (not 5), seal/auth/state + timeout share **8**, network = **6**, `config/keystore.read_only` = **10** | [reconcile] the provider corpus (policy, MCP, threat, milestone) was written against this registry and all cite it as the single source of truth; the §3.8 dotted *strings* are preserved, only the integer projection changes (§5.7). |
