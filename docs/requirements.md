@@ -1,6 +1,6 @@
 # Daxie — The Ethereum Wallet for AI — Design Prompt
 
-> **Status:** ready for design. All 28 logged decisions are resolved (see
+> **Status:** ready for design. All 29 logged decisions are resolved (see
 > the Open Questions Log at the bottom); sections marked `[DECIDED]` are
 > settled requirements. Remaining implementation details (default timeout
 > values, per-network confirmation counts, ETH-arrival detection
@@ -146,6 +146,23 @@ Daxie is **agent-first**. Its audiences, in priority order:
   gap under the admin passphrase; per-asset limits are the deferred item
   that closes the gap. Supersession recorded in the Open Questions Log,
   #2.)*
+- **[DECIDED]** **Arbitrary contract calls** (`daxie contract`): the general
+  escape hatch for non-standard contracts — anything outside the built-in
+  ETH / ERC-20 / 721 / 1155 typed commands. `contract call` (read-only
+  `eth_call`, decoded outputs), `contract send` (sign + broadcast a
+  state-changing call), `contract logs` (query + decode events), and
+  `contract encode` / `decode` calldata utilities, plus a **local
+  per-network contract registry** (alias + stored ABI, the same
+  anti-spoofing model as `daxie token`). ABIs resolve from the registry, an
+  `--abi` JSON file, or an inline `--sig` human-readable signature; args are
+  positional strings coerced by the ABI. `contract send` is the
+  broadest-reach signing path, so it inherits the full policy chokepoint:
+  the contract is the destination (allowlist), `--value` + gas count toward
+  spend limits and the gas cap, it **fails closed** when limits are set but
+  no allowlist is, and core must classify known `approve` / `transfer` /
+  `permit` selectors in raw calldata so the generic command cannot bypass
+  the typed approval ceremonies. Read verbs (`call` / `logs` / `encode` /
+  `decode`) never sign. See [cli-spec.md](cli-spec.md) (`daxie contract`).
 - **[DECIDED]** **Ergonomics**: default account (`daxie account use` /
   `DAXIE_ACCOUNT`) making `--from`/`--account` optional; **positional
   name arguments** (`daxie wallet create treasury`, not `--name`);
@@ -406,3 +423,4 @@ Model the release pipeline on the **witwave `ww` client**
 | 26 | Competitive-gap features | §4/§5 | **decided** — v1 adds message sign/verify (EIP-191/712), ENS with allowlist pinning, token approve/allowance/revoke under policy, keystore passphrase rotation |
 | 27 | Ergonomics | §4 | **decided** — default account, positional name args, `--qr`, `daxie convert` |
 | 28 | Testnet faucet | §4 | **decided** — deferred; document manual faucet URLs |
+| 29 | Arbitrary / non-standard contract calls | §4 | **decided** — `daxie contract call|send|logs|encode|decode` + a local per-network contract+ABI registry; reads are gasless, `contract send` runs the full policy chokepoint (allowlist + value/gas limits + fail-closed when limits set but no allowlist) and must classify approve/transfer/permit selectors in raw calldata so the generic command cannot bypass the typed ceremonies |

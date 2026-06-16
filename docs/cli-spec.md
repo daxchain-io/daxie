@@ -345,6 +345,101 @@ daxie token revoke USDC --spender 0xdef...           # sugar for approve --amoun
 daxie token revoke USDC --spender 0xdef... --wait    # wait flags apply here too
 ```
 
+### `daxie contract` — arbitrary contract calls (non-standard ABIs)
+
+The general escape hatch for any contract Daxie ships no typed command for.
+`tx`, `token`, and `nft` are the ergonomic shortcuts for the ABIs built in
+(ETH, ERC-20/721/1155); `contract` reaches everything else — staking pools,
+vaults, governors, price feeds, your own deployments — over the same chain
+client, signer, and policy chokepoint. There is deliberately no
+special-casing of "non-standard": it is `cast call` / `cast send` with
+Daxie's registry, account refs, gas, policy, and wait semantics layered on.
+
+Contracts get **local, per-network registry aliases** with a stored ABI —
+the same anti-spoofing model as `daxie token` (names are local metadata,
+never resolved from on-chain symbols).
+
+```sh
+# --- contract registry (local, per-network aliases + stored ABI) ---
+daxie contract add staking 0x7a25...AbCd --abi ./staking.json     # register address + ABI under an alias
+daxie contract add staking 0x7a25...AbCd --abi-stdin < staking.json
+daxie contract list                                              # aliases, addresses, network
+daxie contract show staking                                      # address, ABI summary (functions/events)
+daxie contract remove staking
+
+# --- READ: eth_call, no signing, no gas ---
+daxie contract call staking earned 0xUser...                    # by alias + fn; ABI gives arg+return types
+daxie contract call staking earned bot/0                        # address-typed args accept account refs / ENS
+daxie contract call 0x7a25...AbCd \                             # ad-hoc, no registration (cast's (in)(out) form)
+    --sig "earned(address)(uint256)" 0xUser...
+daxie contract call ethusd latestRoundData                      # multi-return: each value decoded + labeled
+daxie contract call 0x5f4e...8419 \
+    --sig "latestRoundData()(uint80,int256,uint256,uint256,uint80)"
+daxie contract call staking earned 0xUser... --block 19000000   # historical state
+daxie contract call staking earned bot/0 --from 0xabc... --json # set msg.sender for the call; decoded JSON
+
+# --- SEND: sign + broadcast a state-changing call (gas, policy, wait all apply) ---
+daxie contract send staking stake 1000000000000000000 --from bot/0   # uint256 base units (use `daxie convert` for math)
+daxie contract send staking getReward --from bot/0                   # no args
+daxie contract send weth deposit --value 0.5 --from bot/0            # payable: msg.value counts vs spend limits
+daxie contract send staking withdraw 1000000000000000000 --from bot/0 --dry-run   # build+estimate+policy, no sign
+daxie contract send staking getReward --from bot/0 \
+    --wait --confirmations 2 --timeout 5m --json --yes
+# gas flags (--max-fee/--priority-fee/--speed/--legacy/--gas-limit/--nonce) apply exactly as `tx send`
+
+# --- EVENTS: query + decode past logs ---
+daxie contract logs staking Staked --from-block 19000000
+daxie contract logs staking Staked --arg user=bot/0 --from-block 19000000   # filter indexed arg (ref resolved)
+daxie contract logs 0x7a25...AbCd --sig "Staked(address indexed,uint256)" --from-block 19000000
+
+# --- calldata utilities (no chain, no signing) — for relayers / meta-tx / debugging ---
+daxie contract encode airdrop claim 42 0xUser... 500000000000000000000 '[0xabc...,0xdef...]'  # bytes32[] proof
+daxie contract encode staking stake 1000000000000000000                                       # → 0x… calldata
+daxie contract decode --sig "stake(uint256)" 0x<calldata>                                     # calldata → values
+```
+
+**ABI source, in precedence:** (1) a registered alias's stored ABI; (2)
+`--abi` / `--abi-stdin` JSON; (3) an inline `--sig` human-readable
+signature. `call` needs return types (cast's `(inputs)(outputs)` form, or a
+JSON ABI); `send` / `encode` need only inputs.
+
+**Args are positional strings, coerced by the ABI** (the core accepts
+user-level strings and parses once — see design §2.3). `address`-typed args
+accept account refs, contacts, and ENS names, resolved and echoed before
+signing like any `--to`. `--value` is named for `msg.value` (the ETH
+attached to the call) to keep it distinct from `tx send --amount` and token
+amounts. **[design session]** array / tuple literal syntax (the `'[…]'`
+form above) and large-`uint` ergonomics (decimals are unknowable for an
+arbitrary param — `daxie convert` covers the math).
+
+**Policy — this is the broadest-reach signing command in the wallet, so it
+gets the strictest reading of the guardrails (see `daxie policy`):**
+
+- the **contract address is the destination** and must pass the allowlist
+  if one is set;
+- `--value` counts toward per-tx / per-day spend limits exactly like
+  `tx send`; gas counts toward the daily limit and the gas cap;
+- because v1 limits are ETH-denominated and **cannot see value moved
+  *inside* arbitrary calldata**, `contract send` to a non-allowlisted
+  contract **fails closed whenever spend limits are configured but no
+  allowlist is** — the same fail-closed posture the token/approval paths
+  take (requirements #29, OQ #2), applied here a fortiori because the
+  calldata is opaque to the ETH limits.
+- **[design session] `contract send` must not become a policy bypass.**
+  Raw calldata can encode `approve` / `transfer` / `permit` — the very
+  operations `daxie token approve` wraps in the `--unlimited --yes`
+  ceremony. Core must classify known ERC-20/721/1155/Permit selectors in
+  the calldata and route them through the *same* checks (spender
+  allowlist, the `--unlimited --yes` acknowledgment on unbounded
+  approvals), extending the permit-classification machinery (design §2.6,
+  `KindPermit`) from typed data to raw calldata — otherwise the generic
+  noun silently defeats the typed ones. Classification binds the
+  **signing** verb only: `encode` and `decode` build/parse hex without
+  signing, so they carry no policy (see the closing note below).
+
+`call`, `logs`, `encode`, and `decode` **never sign** — read-only / pure, no
+passphrase, no policy; they accept raw `0x` addresses and ENS refs freely.
+
 ### `daxie sign` / `daxie verify` — gasless message signing
 
 The agent-identity primitive: prove control of an address without a

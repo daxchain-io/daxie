@@ -8,7 +8,7 @@
 >
 > **Inputs.** This document is bound by two specifications it does **not** restate
 > in full and never contradicts: [`docs/requirements.md`](requirements.md) (the
-> 28 resolved `[DECIDED]` items + the Open Questions Log) and
+> 29 resolved `[DECIDED]` items + the Open Questions Log) and
 > [`docs/cli-spec.md`](cli-spec.md) (the v1 command tree, the account-reference
 > grammar, and the JSON/exit-code output contract). Where requirements delegated a
 > detail to the design session (default timeouts, per-network confirmation counts,
@@ -206,6 +206,15 @@ internal/
                       Concrete.
   ethunit/            Pure unit math: parse/format eth/gwei/wei, decimal-aware token
                       amounts. No I/O, no floats. Concrete.
+  abi/                ABI parse/encode/decode + positional-string arg coercion +
+                      the calldata SELECTOR RECOGNIZERS. Wraps go-ethereum
+                      accounts/abi (pure Go: keccak via golang.org/x/crypto/sha3,
+                      math/big, reflect — touches NO secp256k1, so CGO_ENABLED=0
+                      holds, J8/§9.4). Stateless concrete struct (abi.Codec); no
+                      I/O, no chain dep — the contract-verb analogue of erc/ (§2.8).
+                      Functions: ParseJSON, ParseSig, CoerceArgs, ParseLiteral,
+                      PackCall, UnpackReturns/UnpackCalldata, PackEvent, UnpackLog,
+                      ClassifySelector (the §4.2 raw-calldata recognizer source).
   version/            ldflags vars (Version, Commit, Date).
 
 docs/deploy/          Example Compose + K8s manifests (Helm chart arrives with the
@@ -247,6 +256,7 @@ struct instead.
 | `journal.Store` | No second journal backend on any roadmap. Crash-safety is a property of the concrete struct. The indexer is a *read* path (future `Discovery`), not a journal swap. |
 | `registry.Store` | One local registry. The indexer answers a *different* question ("what does this address hold on-chain?") and lands as a new `Discovery` interface when its second impl is built. |
 | `ens.Resolver` | The ENS-pin-refusal test (a re-pointed name must refuse the send) is faked one layer down at `chain.Client` — the universal seam. An `ens.Resolver` interface would be a second mock for behaviour the `chain.Client` fake already exercises. |
+| `abi.Codec` (the ABI codec + selector recognizers as an interface) | One concrete codec wrapping go-ethereum `accounts/abi`. No second impl on any roadmap; its determinism is a property of pure functions over bytes + types, table-tested against golden cast-encoded bytes (§2.9). The selector recognizers it exposes (`ClassifySelector`) are consumed by `policy` and `contract decode` — a shared concrete source, not a swappable seam. |
 | Per-frontend `Renderer` interface | Output is two concrete functions (human, JSON) selected by a bool in `cli/render.go`; MCP always emits structured content. A bool beats an interface; there is no third renderer. |
 
 One concession kept on purpose: the thin `domain` package. The v1.1 HTTP frontend
@@ -282,7 +292,7 @@ API is a shippable library boundary the day the daemon lands.
 | frontends | `cli`, `mcpserver` | `service`, `domain`, `version`, `ethunit` (output formatting) (and `cli`→`mcpserver` for one line) |
 | core | `service` | `domain` + every provider |
 | contract | `domain` | stdlib + go-ethereum *value* types ONLY (no internal pkg, no geth behavioral pkg) |
-| providers | `keys` `chain` `erc` `ens` `policy` `policyseal` `journal` `registry` `config` `secret` `fsx` `ethunit` | `domain`, stdlib, geth; sanctioned edges: `ens→chain`, `erc→chain`, `policy→policyseal`, and `{config,keys,journal,policy,registry}→fsx`/`→secret` |
+| providers | `keys` `chain` `erc` `ens` `policy` `policyseal` `journal` `registry` `config` `secret` `fsx` `ethunit` `abi` | `domain`, stdlib, geth; sanctioned edges: `ens→chain`, `erc→chain`, `policy→policyseal`, `policy→abi` (the calldata classifier delegates selector matching to `abi.ClassifySelector`), and `{config,keys,journal,policy,registry}→fsx`/`→secret`. `abi` is a pure leaf (imports `domain`, stdlib, geth `accounts/abi` only). |
 
 **Rules (each machine-enforced):**
 
@@ -319,7 +329,7 @@ components:
   frontends: { in: internal/{cli,mcpserver}/... }
   core:      { in: internal/service/... }
   contract:  { in: internal/domain/... }
-  providers: { in: internal/{keys,chain,erc,ens,policy,policyseal,journal,registry,config,secret,fsx,ethunit}/... }
+  providers: { in: internal/{keys,chain,erc,ens,policy,policyseal,journal,registry,config,secret,fsx,ethunit,abi}/... }
 deps:
   frontends: { mayDependOn: [core, contract, version] }   # cannot reach providers
   core:      { mayDependOn: [contract, providers] }        # the only orchestrator
@@ -345,6 +355,8 @@ determinism by banning **wall-clock reads and non-deterministic I/O**, not the
 - it **permits** `time.Time` / `time.Duration` *type* references, because the core
   takes time only through the injected `clock func() time.Time` (§2.4) and
   `domain.Duration` wraps `time.Duration` as a value type.
+
+The determinism ban targets `internal/service` and `internal/domain` only. **`internal/abi` is a provider, not core** — the keccak hashing it does for 4-byte selectors / 32-byte topics is allowed (it is pure computation over bytes, like every other provider's crypto), and it is therefore *not* subject to the `service`/`domain` no-`os`/no-`crypto/rand`/no-`time.Now` ban. Keeping the hashing in `abi` (a provider) rather than `service` is exactly why `service.EncodeCalldata`/`DecodeCalldata` can be pure use cases without tripping the guard.
 
 Determinism is *structural and checkable* — a call-expression check, not reviewer
 vigilance. The third gate is the frontend *parity* suite (§2.9): identical inputs
@@ -402,12 +414,22 @@ func (s *Service) Verify(ctx, req domain.VerifyRequest) (domain.VerifyResult, er
 func (s *Service) ResolveENS(ctx, req domain.ENSRequest) (domain.ENSResult, error)
 func (s *Service) Gas(ctx, req domain.GasRequest) (domain.GasResult, error)
 func (s *Service) AbandonTx(ctx, p domain.Principal, req domain.TxRef) (domain.TxResult, error)
+// + daxie contract — five use cases (only ContractSend is privileged):
+func (s *Service) ContractCall(ctx, req domain.ContractCallRequest) (domain.ContractCallResult, error)            // READ; eth_call; never signs
+func (s *Service) ContractSend(ctx, p domain.Principal, req domain.ContractSendRequest, sink domain.EventSink) (domain.TxResult, error) // SIGNS; reuses SendTx's authorize→broadcast→settle path
+func (s *Service) ContractLogs(ctx, req domain.ContractLogsRequest) (domain.ContractLogsResult, error)            // READ; eth_getLogs; never signs
+func (s *Service) EncodeCalldata(ctx, req domain.EncodeRequest) (domain.EncodeResult, error)                      // PURE; no chain, no signing
+func (s *Service) DecodeCalldata(ctx, req domain.DecodeRequest) (domain.DecodeResult, error)                      // PURE; no chain, no signing
+// + contract-registry admin (AddContract/ListContracts/ShowContract/RemoveContract) — same shape + state-class
+//   read-only handling as the §7.8 token/nft/contact registry methods.
 // + wallet/account/token/nft/contact/network/rpc/policy admin methods, same shape.
 ```
 
 `Principal` (§2.5) is the *who*; the same parameter the HTTP daemon will fill from a
 bearer token. In v1 it is always the local process. Passing it from day one means
 the daemon does not add a parameter to every method — it just stops hard-coding it.
+
+**`daxie contract` adds no new pipeline.** `ContractSend` resolves the ABI, coerces the positional args into raw calldata, builds a `domain.TxRequest` carrying that calldata + `--value`, and routes through the *identical* `authorize → broadcast → settle/abort` sequence (§2.7, §5.1) `SendTx` uses — so it inherits the policy chokepoint structurally and cannot route around it (§2.2 rule 2). The four read/pure verbs do not sign and so take neither `Principal` nor `EventSink`; `EncodeCalldata`/`DecodeCalldata` touch no provider that does I/O (the keccak hashing happens in the `abi` provider, satisfying the §2.3 guard on `service`). All five exist on the one façade so both frontends reach them through a single API.
 
 > **Reconciliation note (package name).** Several parts referred to this composition
 > root as `internal/core` / `core.Daxie` / `core.Signer`. The canonical name is
@@ -504,6 +526,123 @@ func (d *Duration) UnmarshalJSON(b []byte) error  // accepts "5m"
 The full `TxRequest`/`TxResult`/`WaitOpts`/event structs and the error taxonomy are
 in §5.2, §5.3, and §5.7 (they belong with the transaction pipeline they serve).
 
+**`daxie contract` request/result types (§2.5 conventions — no float field; every user value a string, J4).** Args cross as `[]string` — positional, coerced **once** in core by the ABI (§2.3 "parse once"). Return/decoded values come back as **labeled string-typed** entries (a `uint256` exceeds int64; it is a decimal string, never a number — same rule as §6.2 amounts).
+
+```go
+package domain
+
+// ABISource — resolution input; precedence enforced in core (registered alias's
+// stored ABI > --abi/--abi-stdin JSON > inline --sig). Exactly one source must be
+// resolvable for the named method/event; disagreement is usage.* (exit 2).
+type ABISource struct {
+    Alias   string `json:"alias,omitempty"`     // registry alias → stored ABI
+    ABIJSON string `json:"abi_json,omitempty"`  // --abi file contents OR --abi-stdin (read by the frontend)
+    Sig     string `json:"sig,omitempty"`       // inline "earned(address)(uint256)"
+}
+
+// DecodedValue — one labeled output/arg; Value ALWAYS a string (uint256 > int64;
+// arrays/tuples → JSON-encoded string).
+type DecodedValue struct {
+    Name  string `json:"name,omitempty"` // ABI output name when present
+    Type  string `json:"type"`           // solidity type, e.g. "uint256","bytes32[]"
+    Value string `json:"value"`
+}
+
+// ── contract call (READ; eth_call; never signs) ──────────────────────────────
+type ContractCallRequest struct {
+    Contract string    `json:"contract" jsonschema:"alias, 0x address, or ENS of the contract"`
+    Method   string    `json:"method,omitempty" jsonschema:"function name; omit when --sig carries it"`
+    Args     []string  `json:"args,omitempty" jsonschema:"positional args as strings, coerced by the ABI"`
+    ABI      ABISource `json:"abi,omitempty"`
+    From     string    `json:"from,omitempty" jsonschema:"optional msg.sender (address/ENS/account ref); NOT a signer"`
+    Block    string    `json:"block,omitempty" jsonschema:"block number or tag; empty = latest"`
+    Network  string    `json:"network,omitempty"`
+    RPC      string    `json:"rpc,omitempty"`
+}
+type ContractCallResult struct {
+    Contract Dest           `json:"contract"`           // resolved + echoed (Dest, §2.5)
+    Method   string         `json:"method"`
+    Returns  []DecodedValue `json:"returns"`            // one per ABI output, labeled
+    Block    *uint64        `json:"block,omitempty"`
+    Network  string         `json:"network"`
+}
+
+// ── contract send (SIGNS; routes through §5.1 exactly like tx send) ───────────
+type ContractSendRequest struct {
+    Contract string    `json:"contract" jsonschema:"alias, 0x address, or ENS — the tx DESTINATION"`
+    Method   string    `json:"method,omitempty"`
+    Args     []string  `json:"args,omitempty"`
+    ABI      ABISource `json:"abi,omitempty"`
+    Value    string    `json:"value,omitempty" jsonschema:"msg.value, e.g. 0.5 (ETH); counts vs spend limits"`
+    From     string    `json:"from,omitempty"`
+    // gas/nonce/wait/dry-run/confirm — IDENTICAL to TxRequest so there is ONE gas+wait surface.
+    GasLimit    string   `json:"gas_limit,omitempty"`
+    MaxFee      string   `json:"max_fee,omitempty"`
+    PriorityFee string   `json:"priority_fee,omitempty"`
+    GasPrice    string   `json:"gas_price,omitempty"`
+    Speed       string   `json:"speed,omitempty"`
+    Legacy      bool     `json:"legacy,omitempty"`
+    Nonce       *uint64  `json:"nonce,omitempty" jsonschema:"type=integer,minimum=0"`
+    Network     string   `json:"network,omitempty"`
+    RPC         string   `json:"rpc,omitempty"`
+    DryRun      bool     `json:"dry_run,omitempty"`
+    Confirm     bool     `json:"confirm" jsonschema:"default=false"` // the --yes gate; MCP default false
+    Yes         bool     `json:"-"`                                  // CLI-only TTY skip; excluded from MCP schema
+    Wait        WaitOpts `json:"wait,omitempty"`
+}
+// ContractSend returns the SAME domain.TxResult as SendTx (§5.2) — one result type
+// for every broadcasting op.
+
+// ── contract logs (READ; eth_getLogs; never signs) ───────────────────────────
+type LogFilter struct {
+    Name  string `json:"name"`
+    Value string `json:"value"` // coerced to a 32-byte topic by the ABI (address args ref/ENS-resolved)
+}
+type DecodedLog struct {
+    TxHash    string         `json:"tx_hash"`
+    LogIndex  uint           `json:"log_index"`
+    Block     uint64         `json:"block"`
+    BlockHash string         `json:"block_hash"`
+    Event     string         `json:"event"`
+    Args      []DecodedValue `json:"args"` // indexed (topics) + non-indexed (data), labeled
+}
+type ContractLogsRequest struct {
+    Contract  string      `json:"contract" jsonschema:"alias, 0x address, or ENS"`
+    Event     string      `json:"event,omitempty" jsonschema:"event name; omit when --sig carries it"`
+    ABI       ABISource   `json:"abi,omitempty"`
+    Args      []LogFilter `json:"args,omitempty" jsonschema:"indexed-arg filters (name=value)"`
+    FromBlock string      `json:"from_block,omitempty"`
+    ToBlock   string      `json:"to_block,omitempty"` // empty = latest
+    Network   string      `json:"network,omitempty"`
+    RPC       string      `json:"rpc,omitempty"`
+}
+type ContractLogsResult struct {
+    Contract Dest         `json:"contract"`
+    Event    string       `json:"event"`
+    Logs     []DecodedLog `json:"logs"`
+    Network  string       `json:"network"`
+}
+
+// ── encode / decode (PURE; no chain, no signing) ─────────────────────────────
+type EncodeRequest struct {
+    Method string    `json:"method,omitempty"`
+    Args   []string  `json:"args,omitempty"`
+    ABI    ABISource `json:"abi,omitempty"`
+}
+type EncodeResult struct { Calldata string `json:"calldata"` } // "0x…"
+type DecodeRequest struct {
+    Calldata string    `json:"calldata" jsonschema:"0x… raw calldata"`
+    ABI      ABISource `json:"abi,omitempty"` // --sig "stake(uint256)" or a registered/--abi ABI
+}
+type DecodeResult struct {
+    Method   string         `json:"method"`
+    Selector string         `json:"selector"` // "0x…" 4-byte
+    Args     []DecodedValue `json:"args"`
+}
+```
+
+**ABI resolution + arg coercion (plugs into §2.3 "parse once").** Core coerces `Args []string` **once**, in `service.Contract*`, via `abi.CoerceArgs`. The ABI *is the parser*: each positional string is coerced to the declared solidity type. `address`-typed params additionally accept **account refs / contacts / ENS** — resolved through the same `domain.ParseAccountRef` + `Dest` resolution as any `--to` and **echoed before signing** (§4 always-echo rule). Scalars: `uintN`/`intN` are decimal **or** `0x`-hex base-unit integers (**no implicit decimal scaling** — `daxie convert` does the 10^n math); `bool` = `true`/`false`; `bytes`/`bytesN` = `0x` hex (length-checked); `string` verbatim. Compound literals (one cast-compatible grammar in `abi.ParseLiteral`, type-directed recursive descent, pure, golden-tested against `cast calldata`): arrays `[a,b,c]`, tuples `(a,b,c)`, nesting allowed; a delimiter-containing element is double-quoted (`"a,b"`, with `\"`/`\\` escapes); `[]`/`()` are empty. A malformed literal is `usage.*` (exit 2) naming the offending arg index + expected type. **`call` requires return types** (`--sig` carries `(outputs)`, or the JSON ABI declares `outputs`); `send`/`encode` need only inputs; `decode` needs only the input shape.
+
 ### 2.6 Provider interfaces (the two that earn their keep)
 
 ```go
@@ -548,12 +687,12 @@ type Client interface {
     // so the gas/speed policy lives in exactly one place. Returns 1559 fees.
     SuggestFees(ctx context.Context, speed domain.Speed) (maxFee, priorityFee, baseFee *big.Int, err error)
     SuggestGasPrice(ctx context.Context) (*big.Int, error) // legacy chains
-    CallContract(ctx context.Context, msg ethereum.CallMsg, block *big.Int) ([]byte, error)
+    CallContract(ctx context.Context, msg ethereum.CallMsg, block *big.Int) ([]byte, error) // backs `contract call`: --from→msg.From (Signer.Address, no unlock), --block→block (nil=latest)
     SendRawTransaction(ctx context.Context, raw []byte) (common.Hash, error)
     Receipt(ctx context.Context, h common.Hash) (*types.Receipt, error)
     BlockNumber(ctx context.Context) (uint64, error)
     BlockByNumber(ctx context.Context, n *big.Int, fullTx bool) (*types.Block, error) // receive ETH scan
-    FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error)
+    FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error) // backs `contract logs` (abi.PackEvent builds Topics) and the §5.8 receive engine — no signature change
     SubscribeLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)  // WS, v1.1
     SubscribeNewHead(ctx context.Context, ch chan<- uint64) (ethereum.Subscription, error)                          // WS; ErrNotSupported on HTTP
     Close()
@@ -1396,6 +1535,10 @@ const (
     KindTransfer Kind = iota + 1 // ETH / ERC-20 / ERC-721 / ERC-1155 send
     KindApprove                  // ERC-20 approve / revoke (spend-equivalent, requirements §4)
     KindPermit                   // EIP-2612 / DAI-style / Permit2 signature (spend-equivalent)
+    // NO opaque KindContractCall is added: a Kind policy treats as "contents unknown"
+    // would carry no spender/recipient/unlimited for the gates to read and would BE the
+    // bypass. daxie contract send's calldata is classified into the three Kinds above or
+    // denied (the §4.3 stage-5b unknown-calldata gate). See the reversed paragraph below.
 )
 type Check struct {
     Kind     Kind
@@ -1425,9 +1568,26 @@ Decoding rules: the policy-relevant destination for ERC-20/NFT ops is the
 is identity-checked through the registry; the human-meaningful flow of value goes to the
 recipient/spender). `tx cancel`/`tx speedup` build a `KindTransfer` carrying the
 replacement's fields plus `AccountNonce`; they are re-evaluated against the *current*
-policy and their spend accounting **supersedes**, not adds (§4.4). There is **no
-`KindContractCall` in v1**: the v1 surface builds all calldata itself, so there is no
-"unclassifiable" path to design a bypass around.
+policy and their spend accounting **supersedes**, not adds (§4.4).
+
+**`daxie contract send` admits arbitrary user calldata, so the v1 surface no longer
+builds *all* calldata itself.** Raw calldata can encode an ERC-20 `approve`, an ERC-721
+`setApprovalForAll`, an EIP-2612 `permit` — the exact operations the typed paths wrap in
+the spender-allowlist + unlimited-ack ceremony. Daxie therefore **classifies the calldata
+before signing** rather than introducing an opaque kind. Before policy runs,
+`ClassifyCalldata` (the raw-calldata sibling of `ClassifyTypedData`, below) inspects the
+4-byte selector and, on a match to a known ERC-20/721/1155/Permit spend-equivalent,
+**emits the same `KindApprove`/`KindTransfer` `Check` the typed path emits** — so it
+traverses the **identical** stage-3 spender-allowlist, stage-3c fail-closed, and stage-6
+unlimited-ack gates as `daxie token approve` / `tx send`. An **unrecognized** selector
+(or short/undecodable calldata) is **not** given a new Kind; it falls to the new
+deny-by-default **stage-5b unknown-calldata gate** (`contract_call.unknown`, §4.3), the
+calldata analogue of `typed_data.unknown` — "I can't classify it" is never "harmless".
+`--value` is ordinary `SpendWei` either way, and the contract address is the policy
+destination (§5.11). **The conclusion "there is no `KindContractCall`" is kept — but for
+the opposite reason:** not because no arbitrary calldata exists, but because all of it is
+classified into the existing kinds or denied (the prior "no unclassifiable path"
+assertion is withdrawn; §11 D12).
 
 **Message signing × policy (requirements §4 demands this).**
 
@@ -1455,6 +1615,34 @@ recognizer shape on a **different `chainId`** than the active network is denied
 (`policy.denied.typed_data`, reason `chain_mismatch`) — a permit for chain 1 signed
 "while on Sepolia" is a classic exfiltration trick.
 
+**The raw-calldata classifier — `ClassifyCalldata` (the calldata twin of `ClassifyTypedData`).** Pure, in `internal/policy`, delegating selector matching to `abi.ClassifySelector` so the known-selector set is defined **once** and shared with `contract decode`/display. It decodes the leading 4-byte selector and, for recognized spend-equivalents, the minimum args needed to fill a `Check`:
+
+```go
+// `to` is the resolved CONTRACT address; `data` is selector||abi-encoded-args; `value`
+// is msg.value (nil = 0).  ok==true → spend-equivalent Checks evaluated EXACTLY like the
+// typed path (Permit2-batch calldata yields >1; service signs only if ALL pass).  ok==false
+// → unrecognized: caller applies the §4.3 stage-5b contract_call.unknown gate (NOT harmless).
+// A short selector (len(data)<4) or a recognized selector whose args fail to decode to the
+// expected shape returns ok=false WITHOUT a partial Check — same fail-direction as
+// ClassifyTypedData's shape-mismatch rule.
+func (e *Engine) ClassifyCalldata(to common.Address, data []byte, value *big.Int) (checks []Check, ok bool)
+```
+
+| Recognizer | Selector (sig) | Extracted → `Check` |
+|---|---|---|
+| **ERC-20 `approve`** | `0x095ea7b3` `approve(address,uint256)` | `Kind=KindApprove`; `To=spender` (arg0); `Unlimited` if amount ∈ the §4.2 unlimited sentinels (`2²⁵⁶−1`, uint96/uint160 max); `Asset=to`; `TokenAmt=arg1` |
+| **ERC-20 `increaseAllowance`** | `0x39509351` `increaseAllowance(address,uint256)` | `Kind=KindApprove`; `To=spender` (arg0); `Asset=to` |
+| **ERC-20 `transfer`** | `0xa9059cbb` `transfer(address,uint256)` | `Kind=KindTransfer`; `To=recipient` (arg0); `SpendWei=nil` (token value, not ETH); `Asset=to`; `TokenAmt=arg1` |
+| **ERC-20 `transferFrom`** | `0x23b872dd` `transferFrom(address,address,uint256)` | `Kind=KindTransfer`; `To=recipient` (arg1, destination of value); `Asset=to`; `TokenAmt=arg2` |
+| **ERC-721/1155 `setApprovalForAll`** | `0xa22cb465` `setApprovalForAll(address,bool)` | `Kind=KindApprove`; `To=operator` (arg0); `Unlimited = (approved==true)` (operator-for-all is unbounded → takes the unlimited-ack ceremony); `Asset=to` |
+| **ERC-721 `approve`** | `0x095ea7b3` (selector-collides with ERC-20 `approve`) | disambiguated by registry/ABI `kind` when known, else `KindApprove` `To=spender`, `Unlimited=false` — the conservative reading still routes through the spender allowlist |
+| **ERC-721/1155 `safeTransferFrom`** | `0x42842e0e`, `0xb88d4fde` (721), `0xf242432a`, `0x2eb2c2d6` (1155 batch) | `Kind=KindTransfer`; `To=recipient` (arg1); `Asset=to`; value not ETH-denominated |
+| **EIP-2612 on-chain `permit`** | `0xd505accf` `permit(address,address,uint256,uint256,uint8,bytes32,bytes32)` | `Kind=KindApprove`; `To=spender` (arg1); `Unlimited` if value(arg2) ∈ sentinels or deadline is max; `Asset=to` (a broadcast permit is an approval someone else's signature authorized → closes the "relay a permit via contract send" hole) |
+| **DAI-style on-chain `permit`** | `0x8fcbaf0c` `permit(address,address,uint256,uint256,bool,uint8,bytes32,bytes32)` | `Kind=KindApprove`; `To=spender` (arg1); `allowed(arg4)==true ⇒ Unlimited`; `Asset=to` |
+| **Permit2** | `0x2b67b570`/`0x30f28b7a`/… on `0x000000000022D473030F116dDEE9F6B43aC78BA3` | `Kind=KindApprove`; `To=spender`; `Unlimited` per uint160/uint256 sentinel; multi-spend yields >1 Check |
+
+Decode discipline mirrors `ClassifyTypedData`: match on the **4-byte selector + a successful ABI-decode of the argument shape**, never on a name string (the selector is a property of the *signed bytes*; a user-supplied ABI may lie). `To` is the **decoded spender/recipient**, never the contract. `Unlimited` uses the **same sentinels** as the typed path, so the `--unlimited --yes` / `acknowledgeUnlimited` ceremony fires on an unlimited approval encoded as raw calldata exactly as on the typed path. Both the **contract address** (the tx `To`, for the destination allowlist, §5.11) and the **decoded spender** (the rewritten `Check.To`) are checked.
+
 ### 4.3 The evaluation pipeline
 
 The service fetches every network-derived input **before** the spend-state lock (fresh
@@ -1467,10 +1655,11 @@ highest-precedence violation (§4.9).
 | # | Stage | Applies to | Denial code |
 |---|---|---|---|
 | 1 | **Seal & freshness** — load `policy.json`, verify the detached Ed25519 seal over the canonical body bytes against the anchor-pinned key; refuse if `body.Nonce < anchor.NonceWatermark`; anchor present + policy missing/unparseable ⇒ deny; policy present + anchor missing ⇒ deny; unknown body fields ⇒ deny | every signing op | `policy.seal_violation` / `policy.rollback` / `policy.version` |
-| 2 | **Classification** — build `Check`; decode calldata / typed data. Undecodable calldata on a token/NFT path ⇒ deny | every signing op | `policy.unclassified` |
+| 2 | **Classification** — build `Check`(s); decode calldata / typed data. For `contract send`, run `ClassifyCalldata(to, data, value)` (§4.2): recognized selectors emit the same `KindApprove`/`KindTransfer` Checks the typed path emits and run stages 3–8 unchanged; `ok=false` (unrecognized/short/undecodable) routes to stage 5b. `--value` folds into `Check.SpendWei` here for **every** `contract send`, recognition-independent, so stages 6–8 see the ETH debit even on an unrecognized call. Undecodable calldata on a *typed* token/NFT path remains a hard deny | every signing op | `policy.unclassified` |
 | 3 | **Denylist → allowlist → fail-closed no-allowlist** — (a) denylist match (pinned address, or contact/ens deny entry by name) ⇒ deny unconditionally (beats allowlist, beats `include_self`); (b) when `allowlist_enabled`, the resolved `To` (recipient or spender) must match a pinned address — one gate, uniformly across transfers/NFT sends/approvals/permits; own accounts pass when `include_self` against the **sealed `self_addresses` snapshot**, never the live keystore; (c) for token/NFT transfers and approvals/permits, if limits are set but `allowlist_enabled` is false ⇒ deny `policy.denied.no_allowlist` unless `tokens_no_allowlist_ok` is set under the admin passphrase. ETH transfers are exempt (the ETH limit caps them directly) | transfers, NFT sends, approvals, permits | `policy.denied.allowlist` / `policy.denied.no_allowlist` |
 | 4 | **Pin drift** — if `ToInput` was an ENS name or contact, compare the fresh resolution (carried in pre-lock) to the allow-time pin | same as 3 | `policy.denied.pin_drift` |
 | 5 | **Typed-data gate** — only for `sign typed` not matched by §4.2: unknown ⇒ `typed_data.unknown` (per-network override) + per-domain allow entries; chain mismatch ⇒ deny | sign typed | `policy.denied.typed_data` |
+| 5b | **Unknown-calldata gate** — only for `contract send` whose selector `ClassifyCalldata` returned `ok=false`: once a policy is active, **deny by default** (`contract_call.unknown`), with a per-`(network, contract, selector)` allow registry (`contracts_allowed[]`) the operator opts triples into **under the admin passphrase** — the structural twin of the §4.5 `typed_data.allowed[]` registry. A recognized spend-equivalent never reaches 5b (it ran 3–8 as a typed op). The ETH gates (3a denylist, 3b/3c allowlist on the **contract address as destination**, 6 per-tx, 7 daily, 8 gas cap) on `--value` + gas still apply here a fortiori. There is **no `tokens_no_allowlist_ok`-style blanket override for arbitrary calldata** — the ack is per-triple, because one wrong arbitrary call's blast radius is unbounded | contract send | `policy.denied.contract_call` |
 | 6 | **Per-tx limit** — ETH, for every broadcasting Kind: `SpendWei(0 if nil) + MaxGasWei(0 if nil) ≤ max_tx_wei`. Unlimited approvals/permits: denied unless `Acked` and the policy does not set `allow_unlimited:false` for that token | tx, approvals | `policy.denied.tx_limit` / `policy.denied.unlimited_unacked` |
 | 7 | **Daily limit** — rolling-24h window sum + this request's ETH debit ≤ `max_day_wei`. The window accumulates native value **plus worst-case gas of every signed tx** | tx, approvals | `policy.denied.day_limit` |
 | 8 | **Gas cap** — `GasPrice` ≤ `max_gas_price_wei`. **No silent clamping** (clamping under the market base fee produces stuck txs); the payload carries the current base fee so the caller distinguishes "fee spike, retry" from "my flags are wrong" | everything that broadcasts | `policy.denied.gas_cap` |
@@ -1479,6 +1668,8 @@ highest-precedence violation (§4.9).
 full violation list in JSON — agents pre-flight without burning a signing attempt. RBF
 deadlock is documented behavior: if a stuck tx needs a ≥ +12.5% bump that exceeds the
 gas cap, `tx speedup` is denied (the remediation is the operator raising the cap).
+
+**`contract send` and the fail-closed-no-allowlist rule (a fortiori).** The stage-3c rule already refuses token/NFT/approval paths when limits are configured but `allowlist_enabled` is false. `contract send` is strictly broader — its calldata can move value the ETH limits cannot see — so the refusal binds *harder*: recognized spend-equivalent calldata inherits stage-3c verbatim (`policy.denied.no_allowlist`); unrecognized calldata to a non-allowlisted contract with limits set is refused unless the contract address is allowlisted **or** the `(network, contract, selector)` triple is in `contracts_allowed[]`. `daxie contract send --dry-run` runs stages 1–8 + 5b with no reservation and emits the **classification result** in the JSON verdict (`"classified_as":"approve","spender":"0x…","unlimited":true`), so an agent pre-flights whether its raw calldata is treated as a spend-equivalent before burning a signing attempt — the recommended relayer/meta-tx pattern. `ClassifyCalldata` runs at stage 2 inside `authorize` (§2.7), the same insertion point `ClassifyTypedData` uses for `SignTyped`: one classification step, two sources (typed data + raw calldata), one downstream gate set.
 
 > **Reconciliation note (denied sub-code strings).** Two spellings exist across the
 > corpus for the same denials: the policy part used `policy.denied.tx_limit` /
@@ -1582,6 +1773,8 @@ the `--unlimited --yes` / `acknowledgeUnlimited` ceremony, and `allow_unlimited:
 "per-asset rules" requirements §5 names as a future layer; `tokens[]` reserves the field
 shape so the future layer is additive. This is the deferred item that closes residual R6.
 
+**`contract send --value` (msg.value).** ETH attached to a payable call is ETH-denominated native value, written to `Check.SpendWei` for *every* `contract send`, recognized selector or not. It is the **one** part of arbitrary calldata v1's ETH limits can fully see, so it is debited and reserved identically to a `tx send` amount: it counts toward the **per-tx** limit (stage 6) and the **rolling-24h daily** limit (stage 7), reserves before signing under the per-account flock, and `SettleActual` releases it on a reverted receipt; gas counts toward the daily limit + gas cap (stage 8) exactly as `tx send`. **What the ETH limits cannot see** is value moved *inside* the calldata — that is why the contract-as-destination allowlist + the fail-closed-no-allowlist rule + the selector classifier (§4.2) are load-bearing for `contract send`, not the ETH limits alone. `--value` (named for `msg.value`) and `tx send --amount`/token amounts never co-mingle in `SpendWei`: a `contract send` carries *either* a display-only `TokenAmt` (recognized token op) *or* an ETH `SpendWei` from `--value`, and only `SpendWei` is ever compared to a limit. No new reservation state, no counter-file shape change: the reservation is an ordinary `(network, from, account_nonce)` entry whose `value_wei` is `--value` and whose `asset` is the recognized token contract (or `"eth"` when none).
+
 ### 4.5 Policy file format and sealing
 
 `$DAXIE_STATE_DIR/policy.json` — **state class**. The stored file is a two-member
@@ -1646,7 +1839,11 @@ possible:
     "unknown": "deny",
     "allowed": [ { "chain_id": 1, "verifying_contract": "0x…adc0",
       "primary_type": "OrderComponents", "label": "seaport-1.6" } ]
-  }
+  },
+  "contracts_allowed": [
+    { "network": "mainnet", "contract": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+      "selector": "0x12345678", "label": "vault-withdrawTo", "added_at": "…" }
+  ]
 }
 ```
 
@@ -1669,6 +1866,18 @@ possible:
   passphrase, so without the snapshot a prompt-compromised agent could import an attacker
   key and mint itself an allowlisted destination. Refreshed at every admin mutation;
   `policy show` lists keystore addresses missing from the snapshot.
+- **`contracts_allowed[]` is the §4.3 stage-5b unknown-calldata allow registry** — the
+  structural twin of `typed_data.allowed[]`, but keyed on a `(network, contract, selector)`
+  triple instead of `(chain_id, verifying_contract, primary_type)`. Each entry is
+  `{network, contract, selector, label, added_at}` (`selector` is the 4-byte function
+  selector as `0x` hex; `label` is an operator note like `"vault-withdrawTo"`). An
+  unrecognized selector on `contract send` is **deny-by-default once a policy is active**
+  unless either the contract address is allowlisted **or** its exact triple appears here —
+  there is no `tokens_no_allowlist_ok`-style blanket override (the ack is per-triple
+  because one wrong arbitrary call's blast radius is unbounded, §4.3 stage 5b). It is
+  **per-network keyed** like the rest of the body and **covered by the seal/nonce** like
+  every other field — editing it directly on the volume fails seal verification and halts
+  signing. Written only by the admin-gated `policy contract allow|remove` command (§4.7).
 
 **Seal construction (`policyseal`):**
 
@@ -1766,8 +1975,9 @@ Two secrets, never interchangeable: the keystore passphrase signs *within* polic
 admin passphrase *defines* policy. The admin passphrase is accepted through the standard
 secret channels only (prompt at TTY, `--admin-passphrase-stdin|file`,
 `DAXIE_ADMIN_PASSPHRASE[_FILE]`) — never as a flag value, never present in agent pods.
-Every mutating command (`policy set/allow/deny/counters release/change-admin-passphrase`)
-executes: read policy + anchor; derive `(sk, pk)` from the supplied passphrase +
+Every mutating command (`policy set/allow/deny/typed allow|remove/contract
+allow|remove/counters release/change-admin-passphrase`) executes: read policy + anchor;
+derive `(sk, pk)` from the supplied passphrase +
 `anchor.salt`; `pk != anchor.VerifyKey (and != VerifyKeyNext)` ⇒ `policy.admin_auth`,
 stop; verify the seal over the decoded body (`policy.seal_violation` on mismatch); decode
 strict; apply the mutation; `nonce++`; refresh `self_addresses`; re-sign over the exact
@@ -1797,7 +2007,12 @@ bootstraps the anchor**), `policy allow`/`policy deny` (with `--remove`; ENS pin
 `policy check` (what-if `Evaluate`), `policy counters [release <id>]`, `policy pin
 --print|--verify <key>`, `policy change-admin-passphrase` (`--stage`/`--commit` for
 fleets), `policy typed allow|remove` (the per-domain typed-data allow registry),
-`policy reset --force`. **K8s two-domain ordering (a required `docs/deploy/` runbook):**
+`policy contract allow <contract> --selector 0x… [--network …] [--label …]` /
+`policy contract remove <contract> --selector 0x… [--network …]` (the
+per-`(network, contract, selector)` unknown-calldata allow registry that writes the §4.5
+`contracts_allowed[]` field — the §4.3 stage-5b twin of `policy typed allow|remove`;
+admin-passphrase-gated, running the same seal/nonce/`self_addresses`-refresh flow as every
+other mutation above), `policy reset --force`. **K8s two-domain ordering (a required `docs/deploy/` runbook):**
 each mutation produces the sealed `policy.json` (state PVC) and the anchor (config
 ConfigMap); write the **policy file first, then the anchor** (a failure between leaves
 `file.nonce > anchor.watermark`, which the runtime accepts; anchor-first would
@@ -1854,10 +2069,14 @@ seal/auth/state/rollback class). Neither collides with the tx-lifecycle codes.
 | 3 | `policy.denied.pin_drift` | ENS/contact resolution ≠ allow-time pin | `reason`, `name`, `pinned`, `current` |
 | 3 | `policy.denied.typed_data` | unknown typed data with deny / chain mismatch / unlisted domain | `reason`, `primary_type`, `verifying_contract`, `chain_id` |
 | 3 | `policy.denied.unlimited_unacked` | unlimited approval/permit without the ceremony, or `allow_unlimited:false` | `token`, `spender` |
+| 3 | `policy.denied.contract_call` | `contract send` with an **unrecognized selector** to a non-allowlisted contract while a policy is active, and the `(network, contract, selector)` triple is not in `contracts_allowed[]` (the §4.3 stage-5b unknown-calldata gate) | `network`, `contract`, `selector`, `reason` (`unknown_selector` \| `not_allowed`) |
+| 3 | `policy.denied.contract_value` | reserved alias — `contract send --value` over the per-tx/day ETH limit surfaces as the existing `policy.denied.tx_limit`/`day_limit` (msg.value is ordinary `SpendWei`); this row documents that **no new value code is minted** | — |
 
 **Precedence when multiple violations accumulate:** `seal_violation` > `state_error` >
-`allowlist`/`no_allowlist` > `pin_drift` > `typed_data` > `tx_limit` > `day_limit` >
-`gas_cap`. The process exits with the highest-precedence code; **all** violations ride in
+`allowlist`/`no_allowlist` > `pin_drift` > `typed_data` ≈ `contract_call` > `tx_limit` >
+`day_limit` > `gas_cap` (`contract_call` sits in the same "can't classify; deny-by-default"
+band as `typed_data`, one for calldata, one for typed data; `retryable: false` for both —
+retrying without operator action is pointless). The process exits with the highest-precedence code; **all** violations ride in
 `details.violations`. `retryable` per code: `day_limit` true (+`retry_after`), `gas_cap`
 true (the fee market moves), everything else false (retrying without operator action is
 pointless). The wire shape is the global error envelope (§5.7) on **stderr**.
@@ -2015,6 +2234,8 @@ emits `domain.TxResult` (§5.2). `--from`/`DAXIE_ACCOUNT` → `From` (""⇒defau
 skip only, **not** a safety ack); `--wait`/`--confirmations`/`--timeout` → `Wait` (nil ⇒
 return after broadcast). `speedup`/`cancel` take a hash + gas opts and reconstruct the
 intent from the journal record (§5.5).
+
+**`contract send` maps onto the same `TxRequest` with no new pipeline input but the data field.** `service.ContractSend` resolves `Contract` → the tx **`To`** (alias/0x/ENS, resolved + echoed via `EvResolved` before sign — the contract address is the policy destination), maps `abi.PackCall(method, coercedArgs)` → the tx **data** (the one field empty for plain ETH), `--value` → native value (`Amount`, counting vs spend limits exactly like `tx send --amount`), and gas/nonce/wait/dry-run/confirm/yes → identical fields with identical treatment (the 21000 EOA-transfer gas exception does **not** apply — a contract call is never 21000). RBF (`tx speedup`/`tx cancel`) works on a `contract send` hash with no special-casing (`speedup` rebuilds the identical calldata+value, bumped fees). The entire signing-side surface of `contract send` is: (1) resolve ABI, (2) coerce args, (3) classify the calldata (§4.2), (4) hand a `TxRequest` to the existing pipeline — no new gas, wait, journal, or exit code. The pure read/encode/decode paths deliberately bypass this pipeline (§5.11).
 
 **Broadcast error taxonomy.** `eth_sendRawTransaction` errors are normalized
 (string-matched against geth/erigon/nethermind variants) into the canonical codes (§5.7):
@@ -2255,7 +2476,15 @@ or the file > 8 MiB): rewrite latest-snapshot-per-id to a temp file, `fsx.WriteA
 Terminal records are **kept** — the journal *is* `tx list` history. IDs are **ULIDs**.
 
 **Record schema** (uint256 quantities are decimal strings; `kind` ∈ `eth-transfer |
-erc20-transfer | erc721-transfer | erc1155-transfer | approve | cancel | speedup`;
+erc20-transfer | erc721-transfer | erc1155-transfer | approve | contract-call | cancel |
+speedup` — a `contract send` whose calldata the §4.2 classifier recognizes as an
+approve/transfer/permit is journaled under that **classified** kind (`approve` /
+`erc20-transfer` / etc.), so `tx list` stays truthful; only an *unrecognized* call is
+`contract-call`, with `asset:{ "kind": "contract" }` carrying the target contract address
+and `amount: null` (`value_wei` always carries `msg.value`). `source:"mcp"` on an MCP
+`contract_send` gives the operator an audit trail that an agent invoked the broadest-reach
+signing tool. RBF/`replaces`/`replaced_by`, nonce, raw_tx, fees, reservation_id, receipt,
+and the full status lifecycle are identical to any other tx;
 `status` ∈ `signed | broadcast | pending | mined | confirmed | reverted | replaced |
 dropped | failed`; `signed` = journaled before broadcast, `broadcast` = after broadcast
 succeeds — the §5.1 reconciliation discriminator; `source` ∈ `cli | mcp | mcp:<principal>`):
@@ -2323,7 +2552,7 @@ never used (avoids BSD `sysexits` collisions).
 | 0 | `OK` | success; with `--wait`: **confirmed**; `receive`: target reached (a no-wait `tx send` exits 0 on accepted broadcast — 0 ≠ mined there, by design) | — |
 | 1 | `INTERNAL` | Daxie bug / unexpected panic | `internal` |
 | 2 | `USAGE` | bad input: unknown flag/alias/account, malformed address/amount, `--max-fee` on a legacy chain, confirmation needed but no TTY and no `--yes` | `usage.*`, `ref.ambiguous`, `usage.confirmation_required` |
-| 3 | `POLICY_DENIED` | guardrail refusal *before signing*: per-tx/daily limit, allowlist miss, `max-gas-price` cap (incl. RBF bump floor > cap), ENS pin mismatch, unlimited-approve without ceremony, token/approval path with limits-but-no-allowlist and no admin override | `policy.denied.tx_limit`, `policy.denied.day_limit`, `policy.denied.allowlist`, `policy.denied.gas_cap`, `policy.denied.pin_drift`, `policy.denied.no_allowlist`, `policy.denied.typed_data`, `policy.denied.unlimited_unacked` |
+| 3 | `POLICY_DENIED` | guardrail refusal *before signing*: per-tx/daily limit, allowlist miss, `max-gas-price` cap (incl. RBF bump floor > cap), ENS pin mismatch, unlimited-approve without ceremony, token/approval path with limits-but-no-allowlist and no admin override, `contract send` with an unrecognized selector to a non-allowlisted/un-opted-in contract (stage 5b) | `policy.denied.tx_limit`, `policy.denied.day_limit`, `policy.denied.allowlist`, `policy.denied.gas_cap`, `policy.denied.pin_drift`, `policy.denied.no_allowlist`, `policy.denied.typed_data`, `policy.denied.unlimited_unacked`, `policy.denied.contract_call` |
 | 4 | `AUTH` | wrong/missing keystore passphrase; undecryptable keystore | `keystore.bad_passphrase`, `keystore.confirm_required` |
 | 5 | `INSUFFICIENT_FUNDS` | balance < value + worst-case gas (build-time or node-reported) | `funds.insufficient` |
 | 6 | `NETWORK` | RPC unreachable/timeout/5xx; broadcast transport failure (state journaled; resumable) | `rpc.unreachable` |
@@ -2544,6 +2773,16 @@ frontend selects `render.NDJSONStdout`, the core emits `listening → detected �
 → confirmed (per inbound) → complete (terminal)`, and the exit code is also carried in the
 terminal line's `Exit` so agents read it from the stream without inspecting `$?`.
 
+### 5.11 `contract call` / `logs` / `encode` / `decode` — the pure read paths
+
+These four `daxie contract` verbs deliberately **bypass** the §5.1 pipeline (no account lock, no nonce, no journal, no policy, no passphrase, no `Signer` unlock — they never reach `authorize`, §2.7), so they belong with the pipeline they sidestep:
+
+- **`contract call`**: resolve ABI → coerce args → `chain.CallContract` (optional `--from` via `Signer.Address`, the explicitly unlock-free method §2.6; optional `--block`, nil=latest, numeric per cli-spec, `safe`/`finalized` tags reserved not in v1) → `abi.UnpackReturns` → labeled `DecodedValue[]`. Accepts raw `0x`/ENS contract refs and a raw `0x`/ENS `--from` freely.
+- **`contract logs`**: resolve ABI → build `ethereum.FilterQuery` (`q.Addresses=[contract]`, `q.Topics[0]=keccak(eventSig)`, indexed-arg filters → positional `q.Topics[i]` via `abi.PackEvent`; a filter on a non-indexed arg is `usage.*` exit 2; range chunked by the existing §5.8 `receive.max-log-range` 1000-block splitter, no new config key) → `chain.FilterLogs` → `abi.UnpackLog` per log → `DecodedLog[]`.
+- **`contract encode`/`decode`**: **no chain client at all** — `abi.PackCall` / `abi.UnpackCalldata` over the resolved ABI. Pure functions for relayers/meta-tx/debugging.
+
+All four return through the §5.7 taxonomy: ABI/arg errors → `usage.*` (exit 2); unknown contract alias → `ref.not_found` (exit 10); RPC failure → `rpc.unreachable` (exit 6); `eth_call` revert → `tx.reverted` (exit 7, with the decoded revert reason). **No exit 3 is reachable from a read path** — they never touch policy (the cli-spec invariant).
+
 ---
 
 ## 6. MCP server
@@ -2578,8 +2817,10 @@ A direct consequence: **policy mutation and key material never become tools** (�
 
 ### 6.1 Tool surface and deliberate omissions
 
-**v1 ships 26 tools**, one per *operation* (not per asset — a single `send` covers
-ETH/ERC-20/ERC-721/ERC-1155, disambiguated by the `asset` field):
+**v1 ships 31 tools**, one per *operation* (not per asset — a single `send` covers
+ETH/ERC-20/ERC-721/ERC-1155, disambiguated by the `asset` field; and
+`contract_call`/`contract_send` cover every *non-standard* ABI behind a single read/sign
+pair, disambiguated by the function name + ABI source):
 
 | # | Tool | Mirrors | Service method | Input → Output |
 |---|---|---|---|---|
@@ -2609,33 +2850,46 @@ ETH/ERC-20/ERC-721/ERC-1155, disambiguated by the `asset` field):
 | 24 | `ens_resolve` | `ens resolve` | `ResolveENS` | `ENSQuery` → `ENSResult` |
 | 25 | `ens_reverse` | `ens reverse` | `ReverseENS` | `AddressQuery` → `ENSResult` |
 | 26 | `policy_show` | `policy show` | `PolicyShow` | `Empty` → `PolicyView` |
+| 27 | `contract_call` | `contract call` | `ContractCall` | `ContractCallRequest` → `ContractCallResult` |
+| 28 | `contract_logs` | `contract logs` | `ContractLogs` | `ContractLogsRequest` → `ContractLogsResult` |
+| 29 | `contract_encode` | `contract encode` | `EncodeCalldata` (pure) | `EncodeRequest` → `EncodeResult` |
+| 30 | `contract_decode` | `contract decode` | `DecodeCalldata` (pure) | `DecodeRequest` → `DecodeResult` |
+| 31 | `contract_send` | `contract send` | `ContractSend` | `ContractSendRequest` → `TxResult` |
 
 **Deliberately NOT tools** (a recorded, non-regressable security boundary):
 
 | Excluded | Why it must never be an MCP tool in v1 |
 |---|---|
-| All `policy` mutations (`policy set/allow/deny`, the bootstrap `policy set`, `reset`, `change-admin-passphrase`, `typed allow/remove`) | Policy mutation requires the **admin passphrase the agent never holds** (requirements §5). Exposing it would defeat the privilege separation — a compromised agent could raise its own limits. CLI/operator-only, out-of-band. `policy_show` (read-only) **is** exposed. |
+| All `policy` mutations (`policy set/allow/deny`, the bootstrap `policy set`, `reset`, `change-admin-passphrase`, `typed allow/remove`, `contract allow/remove`) | Policy mutation requires the **admin passphrase the agent never holds** (requirements §5). Exposing it would defeat the privilege separation — a compromised agent could raise its own limits or opt its own unknown-calldata triple into `contracts_allowed[]`. CLI/operator-only, out-of-band. `policy_show` (read-only) **is** exposed. |
 | Key export (`wallet/account export`) | A prompt-injected agent must not exfiltrate key material through its own tool channel (§3.9). No tool, ever, in v1. |
 | Key/wallet import & create (`wallet create/import`, `account import`) | Creating a wallet emits a mnemonic once (a secret-emitting op); importing ingests a mnemonic/key over the tool channel (a path an injected prompt could abuse to plant an attacker key). Operator-only. |
 | `account derive`/`alias`/`use` | Keystore-index/default-pointer mutations; over a read-only Secret-mounted keystore they fail `keystore.read_only` anyway. The fresh invoice address an agent legitimately needs is delivered by **`receive`'s `new:true`** — the one derivation path on the agent surface. |
 | `keystore change-passphrase` | Administration is CLI-only; rotating the unlocking secret from inside the agent channel is a privilege the agent must not have. |
 | `network`/`rpc` mutations | Config-class deploy-time topology that fails on a read-only ConfigMap by design; they write **secret references** — operator acts. (Read-only `rpc test` is not exposed either — a debugging affordance.) |
 | `wallet/account delete`, `token/nft/contacts remove/rename` | Destruction is an operator act; clear blast-radius reduction. |
-| `token_add` / `nft_add` / `contacts_add` | The registry is a *security boundary*: an alias resolves **only** through the local registry (never on-chain symbol, requirements §2). Letting a prompt-injected agent `token_add 0xFAKE --name usdc` would let it redefine what `usdc` means for every later `send` — a spoofing primitive. Deferred to v1.1 behind per-principal policy. The escape hatch costs nothing: any tool taking an asset/destination accepts a **raw 0x address**, so withholding the add-tools blocks the *spoofing* path without blocking the *transacting* path. |
+| `token_add` / `nft_add` / `contacts_add` **/ `contract_add`** | The registry is a *security boundary*: an alias resolves **only** through the local registry (never on-chain symbol, requirements §2). Letting a prompt-injected agent `token_add 0xFAKE --name usdc` (or `contract_add staking 0xFAKE --abi …`) would let it redefine what an alias means for every later `send`/`contract_send` — a spoofing primitive. `contract_add` is **strictly worse**: it also plants an attacker-chosen ABI that mis-decodes args for every later `contract_send staking …`, so the exclusion is even less negotiable. Deferred to v1.1 behind per-principal policy. The escape hatch costs nothing: any tool taking an asset/destination/contract accepts a **raw 0x address** (and `contract_call`/`contract_send` additionally accept an inline `abi`/`sig`), so withholding the add-tools blocks the *spoofing* path without blocking the *transacting* path. |
+| `contract_remove`, `contract_list`/`contract_show` (registry mutations + introspection) | Mutations are an operator act (same blast-radius reduction as `token/nft/contacts remove/rename`; the contract registry has no `rename` verb — §2.4, §7.8, §10.2 expose only add/list/show/remove). The read introspection is omitted too: the agent transacts by raw address + inline ABI and never needs the operator-curated alias map (exposing it is a mild recon affordance, and there is no `token_list_aliases`-style read tool for the spoofable registries on the v1 agent surface). The matching reads land in v1.1 alongside `contract_add` behind per-principal policy — keeping the count delta clean at **+5**, not +7. |
 | `mcp serve`/`mcp tools`/`version`/`completion`/`config` | Self-referential or shell-only. |
 
 The shape of the exclusions is one sentence: **the MCP surface can move funds *within
-policy* and read everything; it cannot change who holds the keys, change what the keys are
-allowed to do, change what an alias means, or read a key out.**
+policy* (including arbitrary `contract_send` calls the calldata classifier has bound to
+the typed approval ceremonies) and read everything; it cannot change who holds the keys,
+change what the keys are allowed to do, change what an alias means (token, NFT, contact,
+*or contract+ABI*), or read a key out.**
 
 > **Reconciliation note (registry-add tools).** The Architecture's §4.2 tool table
 > listed `token_add`/`nft_add`/`contacts_add` as agent tools (registries are agent-mutable
 > state-dir data). The MCP part **tightened** this in the agent-safety direction the
 > requirements mandate (the alias-spoofing argument above) and deferred the three to v1.1
-> behind a per-principal policy. The canonical surface is the tightened **26-tool** set;
-> the divergence is recorded as a deliberate security tightening, not a contradiction
-> (§11, D8). It is the one place this section narrows the Architecture's larger list, and
-> only ever toward less agent capability.
+> behind a per-principal policy. The canonical surface is the tightened **31-tool** set
+> (the original 26 + the five `contract` tools); the divergence is recorded as a deliberate
+> security tightening, not a contradiction (§11, D8). It is the one place this section
+> narrows the Architecture's larger list, and only ever toward less agent capability. The
+> `daxie contract` noun (requirements #29) is a pure extension of this surface: its four
+> read/pure verbs + `contract_send` become tools, while `contract_add` + the contract
+> registry mutations/introspection join the deferred registry-add set under the **identical**
+> alias-spoofing argument — no Architecture row narrowed, the same direction (less agent
+> capability at the spoofing boundary, full capability at the transacting boundary).
 
 ### 6.2 Schema conventions
 
@@ -2733,10 +2987,38 @@ structured content sees both — the dual-signal mechanism in §6.6.
 }
 ```
 
+**`contract_send` — input (`domain.ContractSendRequest`):** the one tool whose description must carry the **selector-classifier guarantee** so a model knows raw calldata does not dodge the approval ceremony:
+
+```json
+{
+  "type": "object", "additionalProperties": false,
+  "description": "Sign and broadcast a state-changing call to ANY contract (the escape hatch for non-standard ABIs). Policy-checked before signing EXACTLY like 'send': the contract is the destination (allowlist), --value + gas count toward spend limits and the gas cap, and it FAILS CLOSED when limits are set but no allowlist is. CRITICAL: if the calldata encodes a known approve/transfer/permit, it is classified and routed through the SAME checks as token_approve — including the unlimited ceremony; raw calldata is NOT a policy bypass. Provide the ABI by registry alias, or pass abi/sig inline with a raw 0x address. Waits for confirmations by default over MCP.",
+  "properties": {
+    "from":     {"type": "string", "description": "Account ref. Omit to use the default account."},
+    "contract": {"type": "string", "description": "Contract registry alias OR a raw 0x address. The policy destination; must pass the allowlist when one is set."},
+    "method":   {"type": "string", "description": "Function name (resolved against the ABI), e.g. 'stake'. Omit when 'sig' carries the name."},
+    "args":     {"type": "array", "items": {"type": "string"}, "description": "Positional args as strings, coerced by the ABI. address-typed args accept 0x / contact / ENS (resolved + echoed). Arrays/tuples use the literal form, e.g. '[0xabc...,0xdef...]'. Large uints are base-unit decimal strings (use the convert tool — decimals are unknowable for an arbitrary param)."},
+    "abi":      {"type": "string", "description": "Inline JSON ABI. Use with a raw 0x contract when no alias is registered."},
+    "sig":      {"type": "string", "description": "Inline human-readable signature, e.g. 'stake(uint256)'. Alternative to abi for one function."},
+    "value":    {"type": "string", "description": "msg.value (ETH attached to the call), decimal e.g. '0.5'. Counts toward spend limits exactly like a transfer. Named 'value' (not 'amount') to stay distinct from token amounts."},
+    "acknowledgeUnlimited": {"type": "boolean", "description": "Required when the calldata classifier detects an UNLIMITED approve/permit. Grants the spender an unbounded allowance. Omit unless that is the explicit intent."},
+    "gas":  {"$ref": "#/$defs/GasOpts"},
+    "nonce": {"type": "integer", "description": "Manual nonce (advanced). Omit to auto-derive."},
+    "dryRun": {"type": "boolean", "description": "Build + estimate + policy-check (incl. the calldata classifier), return the plan, do NOT sign or broadcast."},
+    "wait": {"$ref": "#/$defs/WaitOpts"},
+    "network": {"type": "string"}, "rpc": {"type": "string"}
+  },
+  "required": ["contract"]
+}
+```
+
+**`contract_send` — output:** reuses **`domain.TxResult`** verbatim — same `status` enum (`broadcast`/`confirmed`/`reverted`/`pending`), same dual-signal `tx.reverted` mechanism (§6.6), same `tx.*` / exit-3-policy codes; no new output type, no new exit code. `acknowledgeUnlimited` maps to `Check.Acked` exactly as for `token_approve` (never frontend-set, §6.4). `contract_call`/`contract_logs` need no representative block (read-only); `contract_encode`/`contract_decode` are pure, like `convert`.
+
 `wallet_list`/`wallet_show` are read-only and emit **non-secret wallet-grouping metadata
 only** (names, counts, dates, the BIP-44 derivation path, per-index aliases, derived
-addresses) — never a mnemonic, key, or seed. `convert` is the only **pure** tool (no
-network/keystore/policy) and the cheapest live-server smoke test. `receive`'s
+addresses) — never a mnemonic, key, or seed. `convert`, `contract_encode`, and
+`contract_decode` are the only **pure** tools (no network/keystore/policy); `convert` is
+the cheapest live-server smoke test. `receive`'s
 `ReceiveRequest` carries `new:true` as the one derivation path on the agent surface (fails
 `keystore.read_only` on a Secret-mounted keystore); its `wait.timeout` defaults to *block
 forever* (the schema description tells agents to set one).
@@ -2850,7 +3132,7 @@ tools keep working.
 The introspection + contract-verification command builds the same `*mcp.Server`
 (`mcpserver.New(svc)` — wired lazily, touching no keystore/network), asks the SDK for
 every registered tool's inferred schema, and prints it. Default human output: a compact
-`TOOL / KIND / DESCRIPTION` table with a footer (`26 tools (19 read-only, 7 signing).
+`TOOL / KIND / DESCRIPTION` table with a footer (`31 tools (23 read-only, 8 signing).
 Transport: stdio (v1). Signing tools enforce policy in core; no policy-mutation or
 key-export tools are exposed.`). `--json` emits the exact `tools/list` payload (every
 tool's `name`, `description`, `inputSchema`, `outputSchema`, `annotations`) — the
@@ -2862,7 +3144,7 @@ full schema. The command never dials RPC or unlocks the keystore.
 
 ### 6.8 Transport abstraction: stdio now, HTTP in v1.1 without refactor
 
-`mcpserver.New(svc)` builds the `*mcp.Server` (registers all 26 tools) and is
+`mcpserver.New(svc)` builds the `*mcp.Server` (registers all 31 tools) and is
 **transport-free** — it never changes when transports are added. `ServeStdio(ctx, s)` is
 the v1 wiring (`s.Run(ctx, &mcp.StdioTransport{})`). v1.1 lands `ServeHTTP` in a new file,
 touching nothing above, with the signature **reserved now** so auth has a home:
@@ -3287,6 +3569,43 @@ fail with the state-class read-only sibling of `config.read_only` (exit 10). An 
 wanting declaratively pinned registries pre-seeds the state PVC (or the `DAXIE_REGISTRY_DIR`
 volume) from an init container (the pattern ships in `docs/deploy/`).
 
+**Contract registry (`daxie contract`, requirements #29).** Co-located in the same per-network `registry/<network>.json` as a new top-level `contracts` array (not a separate file), so it shares the token/NFT registry's per-network keying, `locks/registry.lock`, `fsx.WriteAtomic` discipline, and `internal/registry` ownership. Same anti-spoofing model: per-network, aliases stored lowercase + matched case-insensitively, resolution **registry-only** (never an on-chain `symbol()`/`name()`). The ABI is stored **inline in the same atomically-written record** (small, a few KB; one `WriteAtomic` so alias→{address, ABI} can never drift), as the canonical Solidity ABI JSON array, normalized/validated at `add` (an invalid ABI is rejected at `add` with `usage.*`, never stored). **No bundled contracts** (unlike token majors — there is no canonical "majors" set for arbitrary contracts). The per-network file's `v` bumps **1 → 2** for the additive `contracts` key; a v1 file is forward-migrated by treating a missing `contracts` as empty (§7.10). Contacts (`registry/contacts.json`) are untouched. Registry is **state class** — `contract add` fails the state-class read-only sibling of `config.read_only` (exit 10) on a read-only mount, identical to `token add`.
+
+```json
+{
+  "v": 2, "network": "mainnet",
+  "tokens": [ /* … unchanged … */ ],
+  "collections": [ /* … unchanged … */ ],
+  "nft_aliases": [ /* … unchanged … */ ],
+  "contracts": [
+    { "alias": "staking",
+      "address": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+      "abi": [
+        { "type": "function", "name": "stake", "stateMutability": "nonpayable",
+          "inputs": [ { "name": "amount", "type": "uint256" } ], "outputs": [] },
+        { "type": "function", "name": "earned", "stateMutability": "view",
+          "inputs": [ { "name": "account", "type": "address" } ],
+          "outputs": [ { "name": "", "type": "uint256" } ] },
+        { "type": "event", "name": "Staked", "anonymous": false,
+          "inputs": [ { "name": "user", "type": "address", "indexed": true },
+                      { "name": "amount", "type": "uint256", "indexed": false } ] }
+      ] }
+  ]
+}
+```
+
+```go
+// internal/registry — peer of Tokens/NFTs/Contacts
+type Contract struct {
+    Alias   string          `json:"alias"`   // lowercase; case-insensitive match; §3.1 grammar; collision needs --name
+    Address common.Address  `json:"address"` // the alias binds BOTH address and ABI — the anti-spoofing unit
+    ABI     json.RawMessage `json:"abi"`     // stored verbatim; parsed/validated by internal/abi at add + defensively on read
+}
+type Contracts struct{ /* per-network store; same path/lock/atomicity as the token registry above */ }
+```
+
+The operator curates `contracts` via CLI `daxie contract add` on a writable state mount (or pre-seeds it from an init container per `docs/deploy/`); the agent surface reaches non-standard contracts by raw address + inline ABI, never by minting registry entries (the `*_add` MCP exclusion, §6.1).
+
 ### 7.9 Shared utilities: permissions, atomic write, locks (`internal/fsx`)
 
 The single durable-write + locking + permission helper; **no package outside `fsx`
@@ -3416,6 +3735,7 @@ required; neither alone suffices (§4.6).
 | A9 | Transaction integrity (to/value/data/chainId/fees/nonce as approved) | Integrity | In-memory between policy check and signing | Cryptographically protected: only the locally signed payload leaves the process |
 | A10 | Local registries (tokens, NFTs, contacts) | Integrity | State | A tampered contact silently redirects funds — same blast radius as a hijacked ENS name |
 | A11 | The `daxie` binary & OCI images | Integrity, provenance | brew / install.sh / GHCR | A trojaned wallet binary defeats everything else (T7) |
+| A12 | Stored contract ABIs (the `daxie contract` registry: alias → address + ABI, per-network) | Integrity | State (`registry/<network>.json`, the §7.8 `contracts[]` array) | A wrong/malicious ABI mis-decodes outputs and *display* and could mislabel a `contract send`'s args to a human reading the echo — but it **cannot** change the bytes signed or the selector the classifier sees: classification reads the calldata, not the ABI's claims (§4.2 `ClassifyCalldata`). Same registry-only anti-spoof model as tokens (A10) |
 
 ### 8.3 Cross-cutting decisions (treat as part of the spec)
 
@@ -3479,6 +3799,18 @@ required; neither alone suffices (§4.6).
     (`flock`/`LockFileEx`), owner-only DACLs, `CGO_ENABLED=0` everywhere. `RLIMIT_CORE=0`
     has no Windows equivalent (WER can capture memory) — there the
     passphrase-encryption layer is the backstop (R7).
+14. **Arbitrary calldata is classified, never trusted as opaque** (§4.2 `ClassifyCalldata`,
+    §4.3 stages 2 + 5b). `contract send` decodes the 4-byte selector before signing:
+    recognized spend-equivalents (`approve`/`transfer`/`setApprovalForAll`/`permit`) become
+    the **same `Check`** the typed path produces and hit the identical allowlist + unlimited
+    ceremony; unrecognized selectors are **deny-by-default once a policy is active**
+    (`contract_call.unknown`), opt-in only via the admin-gated per-`(network,contract,
+    selector)` allow registry. The classifier matches on the **selector** (a property of the
+    signed bytes), **never** on the user-supplied ABI's function names (mutable metadata that
+    may lie) — same "match the bytes, not the claimed name" rule as the §4.2 typed-data
+    recognizers. `--value` is ordinary `SpendWei`; value moved *inside* calldata is invisible
+    to the ETH limits, which is why the contract-destination allowlist + fail-closed-no-
+    allowlist rule are load-bearing here, applied a fortiori.
 
 ### 8.4 Adversaries and attack scenarios
 
@@ -3504,6 +3836,11 @@ execution as the agent uid. An agent with a **general shell** is already (b).
 | Move funds via EIP-191 `personal_sign` | Always allowed (the `\x19…` prefix makes it unusable as a tx/typed-data forgery); single `messages` kill switch. Legacy Wyvern-style protocols honoring personal-sign as fund-moving → R5. Raw-hash signing not offered at all | — |
 | Waive gas cap during fee spike | Gas cap is policy, admin-gated; gas counts toward `--max-day` | exit 3 / `policy.denied.gas_cap` |
 | Crash the pod to reset counters | Counters in durable state class, written pre-broadcast | see T9 |
+| **"Generic noun defeats the typed nouns"** — `contract send <usdc> approve(attacker, MAX)` to dodge `token approve`'s spender-allowlist + unlimited-ack ceremony | `ClassifyCalldata` (§4.2) rewrites the calldata into the **same `KindApprove` Check** `service.Approve` builds (`To=spender`, `Unlimited=true`), so the identical stage-3 spender-allowlist, stage-3c fail-closed, and stage-6 unlimited-ack gates fire — the typed and generic paths are indistinguishable to `Evaluate` | exit 3 / `policy.denied.allowlist` \| `.no_allowlist` \| `.unlimited_unacked` |
+| **Relay a permit / setApprovalForAll via raw calldata** — broadcast an on-chain `permit(...)` or `setApprovalForAll(operator,true)` to grant a spender/operator outside the typed flow | Both selectors are in the v1 recognizer set → `KindApprove` on the decoded spender/operator; `setApprovalForAll(_,true)` is `Unlimited=true` → spender allowlist + unlimited ceremony | exit 3 / `policy.denied.allowlist` \| `.unlimited_unacked` |
+| **Arbitrary-call policy bypass** — `contract send` an *unrecognized* selector to drain via a non-standard fund-moving function (a vault `withdrawTo`, a custom `sweep`) | Stage-5b unknown-calldata gate: deny-by-default once a policy is active; the contract must be allowlisted **and/or** the `(network,contract,selector)` triple opted in under the admin passphrase; `--value`+gas still counted, the fail-closed-no-allowlist rule applies a fortiori | exit 3 / `policy.denied.contract_call` \| `.no_allowlist` |
+| **Malicious / incorrect ABI causing mis-decode** — supply an ABI that mislabels a fund-moving function as benign, hoping the wallet classifies/displays it as safe | Classification reads the **selector + ABI-encoded args of the bytes to be signed**, not the supplied ABI's names; a lying ABI cannot recolor a recognized spend-equivalent (the selector still matches) nor make an unrecognized selector recognized; mis-decode affects only human-facing *display*, which is why the pre-sign echo (§8.3 item 9) shows the resolved `to`/`value`/`selector` and `call`/`decode` never sign | classification unaffected; unrecognized → exit 3 / `policy.denied.contract_call` |
+| **Registered-alias ABI that lies about the contract** — point a `contract` registry alias at address X with an ABI describing some *other*, benign contract | The call is sent to the resolved registry **address**, and `ClassifyCalldata` decodes the **actual calldata bytes**; the ABI lie changes neither the destination (allowlist gate sees the real address) nor the classified spender/recipient (decoded from the bytes). Registry resolution is local/explicit (A10/A12), never on-chain | governed by the destination allowlist + classifier, not the ABI |
 
 **Honest limit:** sub-case (b) can read the keystore file and already knows the
 passphrase → offline decryption outside Daxie. No in-process design stops that — residual
@@ -3631,11 +3968,12 @@ Helm in K8s, agents holding only an access credential) close it?
 | R2a | **High** | Cross-account daily-limit overshoot under concurrency: per-`(network,account)` counter files + per-account flock cannot atomically enforce the across-all-accounts aggregate | Spec-level gap (the policy section owes a per-`(network)` day lock + an N-parallel-send test). Single-account sound; multi-account overshoot detect-after-the-fact via `policy verify` | **Closed**: the daemon is the single serialization point for the network aggregate |
 | R3 | **High** | Policy rollback by arbitrary-file rewrite (replay an older validly-sealed policy + a rolled-back watermark) | **Narrowed to T1b only**: rollback is *prevented* (not just detected) against interface-confined attackers via `NonceWatermark`; on K8s the anchor is a read-only ConfigMap | **Closed**: policy state held by the daemon |
 | R4 | **Medium** | Single RPC endpoint as truth oracle: fake balances, fake confirmations, spoofed `receive` events, lying ENS for non-pinned names | Partial: trusted user-supplied endpoints, chain-ID verification, confirmation thresholds, ENS pinning for allowlisted destinations | **Not closed** — the daemon trusts RPC the same way. Path: multi-endpoint quorum / light-client (post-v2) |
-| R5 | **Medium** | In-policy bleed: a hijacked agent spends *up to* the limits forever; admitted signature classes (EIP-191 personal-sign a legacy protocol honors; admin-allowed EIP-712 order domains not value-checked) | Inherent to autonomous custody; limits bound rate, journal gives audit trail; domain allows are admin-gated | **Not closed** by the boundary itself. Path: the fuller policy engine (rate limits, time windows, per-asset rules, webhooks) |
-| R6 | **Medium** | Token-value drain through unconfigured tokens: ETH-denominated limits cover native value + gas only | Partial: the fail-closed no-allowlist refusal; documented hardening (one rule per held token + allowlist on); approvals/permits stricter regardless | **Not closed** by the boundary; closed by the future **per-asset policy layer** — and today by operator configuration |
+| R5 | **Medium** | In-policy bleed: a hijacked agent spends *up to* the limits forever; admitted signature classes (EIP-191 personal-sign a legacy protocol honors; admin-allowed EIP-712 order domains not value-checked); now also recognized-spend-equivalent `contract send`s that pass every gate (a hijacked agent can approve/transfer via the generic noun within limits + to allowlisted destinations exactly as via the typed nouns — by design; the classifier makes them equivalent, not `contract` *safer* than `token`) | Inherent to autonomous custody; limits bound rate, journal gives audit trail; domain allows are admin-gated | **Not closed** by the boundary itself. Path: the fuller policy engine (rate limits, time windows, per-asset rules, webhooks) |
+| R6 | **Medium** | Token-value drain through unconfigured tokens: ETH-denominated limits cover native value + gas only — now also reached by `contract send`'s recognized `transfer`/`transferFrom` token path (same gap, same closer) | Partial: the fail-closed no-allowlist refusal; documented hardening (one rule per held token + allowlist on); approvals/permits stricter regardless; a recognized `contract send` token transfer to an allowlist-passing recipient is bounded by the same allowlist + the per-asset layer | **Not closed** by the boundary; closed by the future **per-asset policy layer** — and today by operator configuration |
 | R7 | **Medium** | Secret remanence in memory/swap (Go GC copies, swapped pages); Windows has no core-dump suppression | Best-effort wipe + `zeroECDSA`, mlock/VirtualLock, `RLIMIT_CORE=0` on Unix, encrypted-swap guidance | **Narrowed**: only the daemon process ever maps keys, shrinking the surface from every invocation to one hardened process |
 | R8 | **Low** | Cross-host nonce collision when the single-writer rule is violated | Documented rule, cheap per-agent accounts, broadcast-time detection + recovery | **Closed**: the daemon is the single signer per account |
 | R9 | **Low** | Distribution-path compromise (tap PAT, installer mirror) for users who skip verification | Checksums + cosign exist; defaults verify SHA256; cosign opt-in | **Not closed** (orthogonal). Path: cosign-by-default in install.sh once keyless verify UX stabilizes |
+| R10 | **Medium** | **Novel-selector blind spot in `ClassifyCalldata`** — a proxy/diamond (EIP-2535) dispatch selector, a non-standard approval, or a future token standard whose fund-moving selector is not in the v1 recognizer set is not re-classified as a spend-equivalent | **Caught, not silently passed:** the stage-5b unknown-calldata gate is deny-by-default once a policy is active, so a novel selector fails closed exactly like unknown typed data — the residual is *capability* (the agent can't use a novel contract until the operator allowlists it / adds the triple), not a *bypass*. A 4-byte selector collision (two functions sharing a selector, one benign one fund-moving) is the narrow sharp edge: v1 matches the 4-byte selector + decodes args to the expected shape (shape-mismatch → `ok=false` → unknown gate), catching most collisions; a same-shape collision is the documented hardening item (full-signature confirmation via the registry/ABI). Folds the "operator chose to call malicious *logic*" case into §8.5's out-of-scope line | **Not closed** by the boundary (the daemon classifies the same way); closed by **growing the recognizer set + the fuller policy engine** (per-selector rules, ABI-signature confirmation) — same forward path as R5 |
 
 **Reading for the v1 milestone:** R1–R3 — the three worst — are exactly the ones the
 signer-daemon boundary eliminates, which is why requirements §7a names it the v2 hardening
@@ -3875,13 +4213,16 @@ the CLI binds, so putting MCP earlier would churn the surface).
 | M7 | ENS + allowlist pinning (`internal/ens`; ENS accepted wherever destinations/read-only addrs are; activate the M4-reserved pin field) | S | M2, M4 | `v0.7.0` |
 | M8 | `receive` — inbound payment loop (`service/receive.go`; Transfer-log + ETH block-scan/balance-delta detection; NDJSON stream; `--new`) | M | M5, M6 | `v0.8.0` |
 | M9 | `sign`/`verify` (EIP-191/712; `policy.ClassifyTypedData` recognizers; Permit policy; `policy typed allow/remove`) | S | M1, M4 | `v0.9.0` |
-| M10 | MCP server (stdio; transport-agnostic layer + reserved auth hook; 26 tools; parity test) | M | M1–M9 (gate); spike after M4 | `v0.10.0` |
-| M11 | Packaging, release pipeline, docs, v1.0 (goreleaser full pipeline; brew; install.sh; OCI; cosign; `docs/deploy/`; Windows re-validation) | M | all | `v1.0.0-rc.1` → `v1.0.0` |
+| M10 | `daxie contract` — arbitrary/non-standard contract interaction (`internal/abi` codec + user-string arg coercion incl. array/tuple literals; per-network **contract registry** alias+address+stored-ABI behind `internal/registry`, anti-spoof like `token`; `contract call`/`logs`/`encode`/`decode` read/pure over `chain.Client`, never sign; `contract send` enters `service.authorize` as the broadest-reach signing path — full §4.3 chokepoint, fail-closed no-allowlist; the **raw-calldata selector classifier** extends §4.2 `KindApprove`/`KindPermit` from typed data to calldata so the generic noun can't bypass the typed ceremonies) | M | M2, M4, M5, M6, M9 | `v0.10.0` |
+| M11 | MCP server (stdio; transport-agnostic layer + reserved auth hook; 31 tools; parity test) | M | M1–M10 (gate); spike after M4 | `v0.11.0` |
+| M12 | Packaging, release pipeline, docs, v1.0 (goreleaser full pipeline; brew; install.sh; OCI; cosign; `docs/deploy/`; Windows re-validation) | M | all | `v1.0.0-rc.1` → `v1.0.0` |
 
-**Critical path:** M0 → M1 → M2 → M3 → M4 → M5 → M10 → M11. **Parallel slots** (second
-contributor): M6, M7, M9 after M4/M5; M8 after M6; the M10 scaffold + first tools after M4,
-the tool surface **frozen only once M9 merges** (the typed-data tools depend on M9's
-recognizer set). **Pre-release tagging:** every milestone merge to `main` is tagged and
+**Critical path:** M0 → M1 → M2 → M3 → M4 → M5 → M10 → M11 → M12. **Parallel slots** (second
+contributor): M6, M7, M9 after M4/M5; M8 after M6; **M10 (`contract`) after M6 and M9** (its
+read/registry half is M2-ready, but its calldata classifier reuses M9's recognizer set and
+classifies against M5/M6's frozen typed-path selectors); the M11 (MCP) scaffold + first
+tools after M4, the tool surface **frozen only once M10 (`contract`) merges** (the contract
+tools and the typed-data tools both feed the inferred-schema set). **Pre-release tagging:** every milestone merge to `main` is tagged and
 published as a GitHub pre-release with archives + checksums + **cosign signatures from the
 first published tag** (de-risks the M11 signing pipeline eleven tags ahead). No brew/OCI
 until M11. Builds are advertised as integrator-pinnable only from **`v0.4.0`** (once the
@@ -3911,13 +4252,18 @@ Global flags (cli-spec §2) are all M0 (`--json`, `--quiet`, `--network`, `--con
 | `tx speedup/cancel` (RBF; wait flags + 3 exit codes, #19) | M3 | `nft add/alias/aliases/list/show/send` | M6 |
 | `gas` | M3 | `ens resolve/reverse` | M7 |
 | `contacts add/list/show/remove` | M3 | `receive` (all forms; default no timeout; `--new` needs a writable keystore) | M8 |
-| `sign message/typed`, `verify` (ENS `--address`) | M9 | `mcp serve --transport stdio`, `mcp tools [<name>]` | M10 |
+| `sign message/typed`, `verify` (ENS `--address`) | M9 | `mcp serve --transport stdio`, `mcp tools [<name>]` | M11 |
+| `contract add/list/show/remove` (per-network registry: alias+address+stored ABI) | M10 | `contract call` (eth_call; decoded outputs; raw 0x/ENS; never signs) | M10 |
+| `contract logs` (eth_getLogs; decode events; `--arg` indexed filter; never signs) | M10 | `contract encode`/`contract decode` (calldata utilities; pure; never sign) | M10 |
+| `contract send` (sign + broadcast arbitrary call; full §4.3 chokepoint; calldata-selector classification; gas/wait flags as `tx send`) | M10 | `policy contract allow/remove` (`--selector`; admin-gated; writes §4.5 `contracts_allowed[]`; the stage-5b unknown-calldata gate's allow registry) | M10 |
 
 **Flags that land later than their command** (the only intra-command staging):
 `balance --token/--all` (M5), `tx send --token` (M5), ENS-name argument forms on
 `balance`/`--to`/`policy allow`/`verify --address` (M7). Each is gated by the milestone that
 owns the underlying subsystem — no dead flags (Cobra registers them in the owning
 milestone).
+
+All `contract` verbs and their flags (`--abi`/`--abi-stdin`, `--sig`, `--value`, `--block`, `--from` on `call`, `--from-block`/`--arg` on `logs`, and the full `tx send` gas/wait flag set on `send`) land **together in M10** — the noun's codec, classifier, and registry are co-built, so there is no dead-flag staging within `contract`.
 
 ### 10.3 Deferred past v1 — each with its trigger
 
@@ -3943,6 +4289,9 @@ the Daxie pod, agents holding only a credential — the signer-daemon privilege 
 | Blob transactions (EIP-4844/7594) | A concrete agent use case posting blob data; requires extending the gas model — out of v1 scope |
 | Rich NFT metadata (`tokenURI`, IPFS, image render) | Demand on `nft show`; requires an IPFS-gateway privacy decision; a nice-to-have in requirements §2 |
 | WebSocket subscription upgrade for `receive` | First `wss://` endpoint support in `rpc add`; the `chain.SubscribeNewHead` seam already exists, polling remains the fallback |
+| `contract_add`/`contract_remove`/registry-mutation MCP tools | The registry-add anti-spoof boundary (§6.1) defers `*_add` to v1.1 behind per-principal policy; `contract` registry mutation rides the same trigger. Raw-0x + `--abi`/`--sig` covers the agent transact path meanwhile |
+| Richer ABI-arg ergonomics: nested-tuple/multidim-array literals beyond the v1 form; named-arg syntax; per-param decimal hints | v1 ships positional string args coerced by the ABI with array/tuple literals (L13); trigger = observed friction on real non-standard ABIs (governance/vault structs) |
+| `contract simulate`/trace (state-diff, `debug_traceCall`, multicall batching) | Requires `trace_*`/`debug_*` RPC the shipped public endpoints lack (same constraint §5.8 notes for `receive`); trigger = a `trace`-capable endpoint class in `rpc add` + agent demand for pre-flight beyond `--dry-run` |
 | Per-wallet passphrases; fuller policy engine; remote signers (KMS/4337); **the signer-daemon privilege boundary** | Named future layers (requirements §5/§7a). **Per-asset limits** are the specific trigger that closes the v1 ETH-only limit-denomination gap (R6). The **signer-daemon boundary is the v2 hardening path** that closes the spend-counter tamper gap (R2); its first concrete form is the v1.1 HTTP-transport wallet-service deployment |
 
 ---
@@ -3969,13 +4318,15 @@ synthesis performed are marked **[reconcile]**.)
 | L10 | Gas accrual = worst-case `gasLimit × maxFee` at sign, **down-only** reconciliation on receipt; RBF accrues only the fee delta; a `cancel` receipt **releases the linked original's value** | a one-shot invocation may never see a receipt; cross-link release prevents a cancelled send standing as phantom daily spend (§4.4, §5.5). |
 | L11 | Journal format = **JSONL + flock** (not pure-Go sqlite) | a few-MB linear fold is microseconds; sqlite is ~9 MB of C in a wallet's TCB + a second crash model + disclaims network FS (§5.6). |
 | L12 | Per-platform paths: macOS mirrors Linux XDG; **state under `$XDG_STATE_HOME`**; Windows **config roams, keys do not** | terminal-first audience expects `~/.config`; a `tar` of the keystore dir stays a pure key backup; roaming profiles must never replicate keys (§7.3). |
+| L13 | `contract` ABI-arg syntax: **positional strings coerced by the ABI, parsed once in core** (§2.3); `address`-typed args accept account refs/contacts/ENS (resolved + echoed like any `--to`); **array/tuple literals** via `'[a,b,…]'`/`'(a,b,…)'` (JSON-subset, comma-separated, bracket/paren-delimited, double-quote escaping, type-directed recursive descent in `abi.ParseLiteral`); **large `uint` always in base units** (decimals are unknowable for an arbitrary param — `daxie convert` owns the 10^n math) | resolves cli-spec's first `[design session]` item; nested/multidim literals + named args are the §10.3-deferred ergonomics — v1 covers the staking/vault/governor 90% with literals + base-unit ints (cli-spec `daxie contract`). |
+| L14 | `contract` registry = **per-network alias + address + stored ABI**, `internal/registry`-owned, **state class**, alias-only resolution (never on-chain symbol) — the **same anti-spoofing model as the token/NFT registry** (§7.8), ABI stored inline, `v` 1→2; `contract add` fails the state read-only sibling of `config.read_only` (exit 10) on a read-only state mount; `internal/abi` is a new pure-Go (CGO-free) provider leaf wrapping go-ethereum `accounts/abi` (concrete, no second impl), and `contract send` reuses `service.SendTx`'s pipeline rather than a second one (the four read/pure verbs never reach `authorize`) | the registry is a security boundary, not convenience: a name resolving to an attacker ABI/address is the spoofing primitive the local-alias rule kills (requirements §2; §7.8); the leaf keeps the §4.2 recognizers' selector source pure and shared (§2.1). |
 | **Judgment calls (the design's own structural choices)** ||
 | J1 | The composition root is one composed **`service.Service`** with `Open`→use→`Close`; the privileged sequence is **concrete code (`authorize`), not an `Authorizer` interface** | the kernel already sits behind the service boundary; the v2 daemon relocation lands on `domain.Signer` + a policy proxy, so an `Authorizer` interface would have exactly one impl forever (§2.7, §2.1.1). |
 | J2 | Exactly **two** exported provider interfaces (`domain.Signer`, `chain.Client`); everything else concrete | an interface is justified only by a named second impl or a security test seam — minimizing interfaces concentrates the fake surface at `chain.Client` (§2.1.1, §2.9). |
 | J3 | `Principal` + `EventSink` threaded through every method in v1 (always `local` / often nil) | the HTTP frontend + auth add zero parameters to any method; one streaming seam serves stderr/NDJSON/MCP-progress/SSE (§2.4, §5.9). |
 | J4 | **No float-typed field** in any request/result/value type; all user values cross as strings | decimal-exactness becomes a compile-time property, not reviewer vigilance (§2.5). |
 | J5 | MCP input schemas **inferred from the same `domain` request structs** the CLI binds, pinned by a golden test | CLI/MCP drift is structurally impossible; guardrails apply identically because both frontends traverse one `authorize` (§6.2, §6.4). |
-| J6 | MCP surface = **26 tools**; **no policy-mutation, key-export/import/create, derive/alias/use, registry-add tools** | [reconcile] tightens the Architecture's larger list toward less agent capability — the registry is an anti-spoof boundary; raw addresses cover the transact path without the spoofing path (§6.1). |
+| J6 | MCP surface = **31 tools** (incl. `contract_call`/`contract_logs`/`contract_encode`/`contract_decode`/`contract_send`); **no policy-mutation, key-export/import/create, derive/alias/use, registry-add tools — `contract_add`/`contract_remove` join `token_add`/`nft_add` on the excluded side** | [reconcile] tightens the Architecture's larger list toward less agent capability — the contract registry is the **same** anti-spoof boundary as token/NFT (a redefined alias, now also binding an ABI, is a spoofing primitive); raw 0x + `--abi`/`--sig` covers the transact path without the spoofing path (§6.1). |
 | J7 | The default account + aliases live in **keystore `meta.json`**; `next_index` is keystore-class despite being a monotonic counter | a wrong index derives an already-used address from the *same* mnemonic — address freshness is a key-derivation invariant that must share the mnemonic's backup/durability unit (§3.3). |
 | J8 | `internal/fsx` + `internal/secret` are dedicated leaf packages; **`WriteAtomic` atomicity is a correctness guarantee on all 3 OSes** | the Windows divergence (no dir-fsync; `MoveFileEx`+`FILE_SHARE_DELETE`) and the secret-redaction discipline each live in exactly one place; stdlib `os.Rename` is not atomic-on-existing on Windows (§7.9). |
 | J9 | Bare names resolve against **both** the keystore namespace and contacts in destination context; a both-match is a hard `ref.ambiguous` | a silent-preference rule turns a name collision into fund misdirection at the money-routing position; the namespaces share no lock, so create-time rejection can't be airtight (§3.2). |
@@ -3983,6 +4334,7 @@ synthesis performed are marked **[reconcile]**.)
 | J11 | `include_self` resolves against a **sealed `self_addresses` snapshot**, never the live keystore | `account import` needs only the keystore passphrase, so without the snapshot a compromised agent could import an attacker key and mint itself an allowlisted destination (§4.5). |
 | J12 | `policy reset --force` authenticates against the **anchor**, never `--yes` | the corrupt-file → reset-with-own-passphrase attack dies at authentication, on every deployment including laptops (§4.7). |
 | J13 | One error taxonomy (dotted `domain.Error.Code` strings), two thin renderings (CLI exit code + MCP tool-error envelope) | agents branch on identical-meaning codes across both frontends because they come from the same `error` values (§5.7, §6.6). |
+| J14 | MCP surface = **31 tools**: the four `contract` read/pure verbs + `contract_send` become tools; **`contract_add` + the contract-registry mutations/introspection are excluded** under the same alias-spoofing boundary as `token_add` (an alias binds an address **and** an ABI — a strictly larger spoofing primitive); the contract registry is **state-class**, co-located in `registry/<network>.json` with the ABI inline; a `contract send` journals as a normal signed tx (`kind:"contract-call"`, or the classified kind when the calldata is a recognized approve/transfer/permit) | requirements #29: `contract send` is a within-policy fund-mover bound to the typed ceremonies by the §4.2 raw-calldata classifier, so it belongs on the surface; the registry-add stays off because raw-address + inline ABI covers the transact path without the spoof path (§6.1, §7.8, §5.6). |
 | **Reconciliations the synthesis performed (to the Architecture, §2)** ||
 | D1 | Package/type names canonicalized: `core.Daxie`→`service.Service`, `core.Signer`/`signer.Signer`→`domain.Signer` (with `Unlocker`), `policy.Request`→`policy.Check`, `core.Err`→`domain.Error`, `core.Options`→`config.Options` | [reconcile] the Architecture (§2) is the named canonical naming authority; every provider part's `core.*` is mapped (§2.4, §2.6, §4). |
 | D2 | Secret type **`secret.Bytes`** (not `keys.Buffer`/`secret.Buffer`); durable-write/lock helper **`internal/fsx`** (not `internal/atomicfile` or journal-internal); seal package **`policyseal`** | [reconcile] the corpus converged on shared `fsx`/`secret` leaves — adopted as named packages so the Windows divergence + redaction live in one place each (§2.1). |
@@ -3991,11 +4343,13 @@ synthesis performed are marked **[reconcile]**.)
 | D5 | Secret-input precedence amends cli-spec's prompt-first ordering (already folded into cli-spec) | [reconcile] documented loudly: an exported `DAXIE_PASSPHRASE[_FILE]` is consumed even at a TTY (§3.6). |
 | D6 | "Rolling-24h" wording made canonical; the txpipeline part's stray "UTC-day counter"/"UTC rollover" phrasing is reconciled to it | [reconcile] the Architecture, policy, and threat parts already specify rolling-24h; only the txpipeline wording diverged (§4.1). |
 | D7 | Denied sub-code spelling canonicalized to `policy.denied.tx_limit`/`.day_limit`/`.pin_drift`; `policy.denied.spend_limit`/`.ens_pin` are **withdrawn aliases** | [reconcile] two spellings existed for the same denials (same exit code); the policy part owns the taxonomy, so its spelling wins (§4.3). |
-| D8 | cli-spec/requirements refinements: wait flags on `token approve`/`revoke`; the `receive` stream is `listening → detected → confirming → confirmed(per-transfer) → complete(terminal)`; `mcp serve --transport stdio`; `mcp tools [<name>]`; the registry-add tools deferred from the MCP surface | [reconcile] requirements #19 binds wait flags to *all* broadcasting commands; OQ #20 needs both a per-transfer signal and a terminal exit-carrying line; the rest are cli-spec-invited refinements (§5.1, §5.8, §6.1, §6.8). |
+| D8 | cli-spec/requirements refinements: wait flags on `token approve`/`revoke`; the `receive` stream is `listening → detected → confirming → confirmed(per-transfer) → complete(terminal)`; `mcp serve --transport stdio`; `mcp tools [<name>]`; the registry-add tools deferred from the MCP surface; **`daxie contract`: the two cli-spec `[design session]` items are resolved (L13 arg syntax; D12 calldata-selector classification) and the `contract` registry/verbs land in M10** | [reconcile] requirements #19 binds wait flags to *all* broadcasting commands; OQ #20 needs both a per-transfer signal and a terminal exit-carrying line; cli-spec's `daxie contract` section explicitly delegates the array/tuple syntax and the selector-classification crux to the design session (cli-spec `daxie contract`, requirements OQ #29); the rest are cli-spec-invited refinements (§5.1, §5.8, §6.1, §6.8). |
 | D9 | The policy trust root is the single **`policy-anchor.json`** in the config class; the `policy.verify_key` config-key sketch and the `keystore.json` `policy_pin` sketch are **withdrawn** | [reconcile] binding policy freshness to the keystore couples it to a secret the agent holds; a config-key anchor is env/flag-forgeable — the dedicated anchor + Viper carve-out is the only sound construction (§4.6, §7.6). |
 | D10 | `next_index`/aliases stay keystore-class — a **deliberate, named departure** from §7a's "monotonic counters in the state class," fail-closed via the derivation-watermark check | [reconcile] address freshness is a key-derivation invariant, not host-local runtime state; a keystore restored without its state dir would silently reuse indexes (§3.3). |
 | D11 | cli-spec's account-reference table gains a `<contact>` row (destination contexts only) + the ambiguity/collision rules | [reconcile] cli-spec promises contact names for `--to`/the allowlist but omitted the row; a resolver blind to contacts leaves a `[DECIDED]` capability undecidable (§3.2). |
+| D12 | **§4.2's "no `KindContractCall` in v1 … no unclassifiable path to design a bypass around" assertion is withdrawn.** `daxie contract send` (requirements #29) admits arbitrary user calldata — the unclassifiable path the sentence said v1 lacked. Replacement: `contract send` (the **only** signing path) **classifies known ERC-20/721/1155/Permit selectors in the raw calldata** via the pure `policy.ClassifyCalldata` (the calldata twin of `ClassifyTypedData`, delegating selector matching to `abi.ClassifySelector`) and routes matches through the **same `KindApprove`/`KindTransfer`/`KindPermit` Checks** the typed path emits — so the unlimited ceremony, spender allowlist, and fail-closed no-allowlist rule all fire on calldata identically. **`contract encode`/`decode` deliberately do NOT classify** — they are pure, never sign, never touch policy (§5.11, §2.4), so the security crux is closed entirely at the `send` chokepoint where signing happens; classifying a hex string `encode` merely emits would gate nothing. **No opaque `KindContractCall` Kind is added** (an opaque kind would itself be the bypass); **unrecognized** calldata hits the new deny-by-default **stage-5b `contract_call.unknown` gate** (sub-code `policy.denied.contract_call`, exit 3, an admin-gated per-`(network,contract,selector)` allow registry), with `--value`+gas counted and the contract-as-destination allowlist applied a fortiori. **No new exit code** (reuses exit 3). The old conclusion (no opaque kind) is kept for the opposite reason: all arbitrary calldata is now classified into the existing kinds or denied | [reconcile/decision] requirements #29 + cli-spec's `[design session]` security-crux bullet make the §4.2 sentence false; the generic noun must not silently defeat the typed approval ceremonies (§4.2, §4.3, §4.9, §8). |
 
 These are the deltas this document adds on top of the binding specs. Everything else is
-the faithful realization of `requirements.md`'s 28 `[DECIDED]` items and `cli-spec.md`'s
+the faithful realization of `requirements.md`'s 29 `[DECIDED]` items (the 28 prior + #29
+arbitrary contract calls) and `cli-spec.md`'s
 command surface, made buildable.
