@@ -1,0 +1,56 @@
+# go-arch-lint components/deps lattice (design §2.3a).
+#
+# This documents architectural INTENT and runs in CI as a second gate. The
+# AUTHORITATIVE enforcement is internal/arch_test.go (a real Go test, §2.3c) — it
+# is the strict SUPERSET. This file and .golangci.yml's depguard rules are a
+# best-effort SUBSET: they encode every edge their coarser models can express and
+# never contradict arch_test, but the finest-grained checks (frontend→ethunit, the
+# provider→provider sanctioned-edge allow-list, the viper carve-out) live in
+# arch_test.go alone. Provider packages not yet authored in M0 are still listed so
+# a future add cannot violate the lattice silently.
+version: 3
+
+workdir: .
+
+components:
+  host:
+    in: cmd/daxie
+  frontends:
+    in: internal/{cli,mcpserver}/**
+  core:
+    in: internal/service/**
+  contract:
+    in: internal/domain/**
+  providers:
+    in: internal/{keys,chain,erc,ens,policy,policyseal,journal,registry,config,secret,fsx,ethunit,abi}/**
+  version:
+    in: internal/version/**
+
+deps:
+  host:
+    mayDependOn:
+      - frontends
+      - version
+  frontends:
+    mayDependOn:
+      - core
+      - contract
+      - version
+      # frontends may also use the ethunit provider for output formatting (§2.2);
+      # the precise allow-list lives in depguard + arch_test.go.
+  core:
+    mayDependOn:
+      - contract
+      - providers
+  contract:
+    mayDependOn: []
+  providers:
+    mayNotDependOn:
+      - core
+      - frontends
+  version:
+    mayDependOn: []
+
+# The architectural law's precise edge set (frontend→ethunit, provider→provider
+# sanctioned edges, the viper carve-out) is asserted by internal/arch_test.go, which
+# is finer-grained than the component lattice above.

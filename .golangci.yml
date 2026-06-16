@@ -1,0 +1,156 @@
+# golangci-lint configuration for Daxie (golangci-lint v2 schema).
+#
+# This is the depguard "belt" to internal/arch_test.go's "suspenders" (design §2.3):
+# the import-matrix law is encoded here as deny-lists AND asserted by a real test.
+#
+# AUTHORITY: internal/arch_test.go is the load-bearing gate and the strict
+# SUPERSET — it goes red the moment the dependency law breaks, even with every
+# linter uninstalled. This depguard config is a best-effort SUBSET that overlaps
+# it as closely as the linter's model allows. One axis is structurally
+# inexpressible here: the provider→provider sanctioned-edge allow-list (e.g.
+# ens→chain allowed, fsx→ethunit denied) is a per-pair allow-list that depguard
+# (deny-list only) cannot encode, so that check lives in arch_test alone. The
+# geth-behavioral deny-list for `domain` is kept at parity with arch_test's
+# isGethBehavioral set below. CGO is off everywhere (pure-Go deps only, §9.4).
+version: "2"
+
+run:
+  # Lint the build-tagged files for both POSIX and Windows where practical; CI's
+  # test-cross-os matrix exercises the per-OS source on its target runner.
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - depguard      # the import-matrix deny-lists (the whole point, §2.3b)
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - misspell
+    - gosec
+  settings:
+    depguard:
+      rules:
+        # ── Frontends import service + domain (+ version, ethunit) ONLY ──
+        # Files: internal/cli/**, internal/mcpserver/**. They may NOT reach any
+        # provider except ethunit (output formatting). depguard `files` globs are
+        # matched against the absolute file path.
+        frontends:
+          files:
+            - "**/internal/cli/**"
+            - "**/internal/mcpserver/**"
+          deny:
+            - pkg: github.com/daxchain-io/daxie/internal/config
+              desc: "frontends import service+domain(+version,+ethunit) only — not config"
+            - pkg: github.com/daxchain-io/daxie/internal/keys
+              desc: "frontends import service+domain only — not the keys provider"
+            - pkg: github.com/daxchain-io/daxie/internal/chain
+              desc: "frontends import service+domain only — not the chain provider"
+            - pkg: github.com/daxchain-io/daxie/internal/fsx
+              desc: "frontends import service+domain only — not fsx"
+            - pkg: github.com/daxchain-io/daxie/internal/secret
+              desc: "frontends import service+domain only — not secret"
+            - pkg: github.com/daxchain-io/daxie/internal/policy
+              desc: "frontends import service+domain only — not policy"
+            - pkg: github.com/daxchain-io/daxie/internal/policyseal
+              desc: "frontends import service+domain only — not policyseal"
+            - pkg: github.com/daxchain-io/daxie/internal/journal
+              desc: "frontends import service+domain only — not journal"
+            - pkg: github.com/daxchain-io/daxie/internal/registry
+              desc: "frontends import service+domain only — not registry"
+            - pkg: github.com/daxchain-io/daxie/internal/erc
+              desc: "frontends import service+domain only — not erc"
+            - pkg: github.com/daxchain-io/daxie/internal/ens
+              desc: "frontends import service+domain only — not ens"
+            - pkg: github.com/daxchain-io/daxie/internal/abi
+              desc: "frontends import service+domain only — not abi"
+            # NOTE: github.com/daxchain-io/daxie/internal/ethunit is deliberately
+            # NOT denied here — frontends may use it for output formatting (§2.2).
+
+        # ── The contract package imports nothing internal, no geth behavioral pkg ──
+        contract:
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: github.com/daxchain-io/daxie/internal
+              desc: "domain imports nothing internal (it is the wire contract)"
+            # Geth behavioral packages banned from domain — kept at parity with
+            # arch_test.go's isGethBehavioral set (ethclient, rpc, accounts, les,
+            # p2p, node, eth/*, internal/ethapi). domain may use VALUE types only.
+            - pkg: github.com/ethereum/go-ethereum/ethclient
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/accounts
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/rpc
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/les
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/p2p
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/node
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/eth
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            - pkg: github.com/ethereum/go-ethereum/internal/ethapi
+              desc: "domain may use geth VALUE types only — no behavioral packages"
+            # ALLOWED: github.com/ethereum/go-ethereum/common (the value type, §2.5).
+
+        # ── Providers are leaves: never service / a frontend; viper only in config ──
+        # config has its own rule below (the viper carve-out), so it is excluded here.
+        providers:
+          files:
+            - "**/internal/keys/**"
+            - "**/internal/chain/**"
+            - "**/internal/erc/**"
+            - "**/internal/ens/**"
+            - "**/internal/policy/**"
+            - "**/internal/policyseal/**"
+            - "**/internal/journal/**"
+            - "**/internal/registry/**"
+            - "**/internal/secret/**"
+            - "**/internal/fsx/**"
+            - "**/internal/ethunit/**"
+            - "**/internal/abi/**"
+          deny:
+            - pkg: github.com/daxchain-io/daxie/internal/service
+              desc: "providers are leaves — they never import the core"
+            - pkg: github.com/daxchain-io/daxie/internal/cli
+              desc: "providers never import a frontend"
+            - pkg: github.com/daxchain-io/daxie/internal/mcpserver
+              desc: "providers never import a frontend"
+            - pkg: github.com/spf13/viper
+              desc: "viper is allow-listed to internal/config only (§2.2 rule 5)"
+
+        # ── config: the ONE viper carve-out; still may not import service/chain ──
+        config:
+          files:
+            - "**/internal/config/**"
+          deny:
+            - pkg: github.com/daxchain-io/daxie/internal/service
+              desc: "config is a provider/leaf — it never imports the core"
+            - pkg: github.com/daxchain-io/daxie/internal/chain
+              desc: "config never imports chain (§7.5 — Endpoint→chain.Options assembly is service's job)"
+            - pkg: github.com/daxchain-io/daxie/internal/cli
+              desc: "config never imports a frontend"
+            - pkg: github.com/daxchain-io/daxie/internal/mcpserver
+              desc: "config never imports a frontend"
+            # github.com/spf13/viper IS allowed here (the sole carve-out).
+
+  exclusions:
+    rules:
+      # Test fixtures may use patterns gosec flags (temp files, fixed creds, etc.).
+      - path: _test\.go
+        linters:
+          - gosec
+      # arch_test.go and determinism_test.go shell out to `go` and read source dirs —
+      # those are the point of the tests, not findings.
+      - path: internal/(arch|determinism)_test\.go
+        linters:
+          - gosec
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

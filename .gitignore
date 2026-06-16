@@ -1,0 +1,25 @@
+# Build output
+/daxie
+/bin/
+/dist/
+
+# goreleaser snapshot/release artifacts
+/dist/
+
+# Test & coverage
+*.out
+*.test
+/coverage/
+coverage.txt
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

@@ -1,0 +1,42 @@
+# Release pipeline (design §9.5) — SKELETON, NOT ACTIVE in M0.
+#
+# The full tag-triggered pipeline (verify → human-approval gate → goreleaser sign/
+# SBOM/provenance/GHCR → cask-publish → install-smoke) lands at M12. Until then this
+# workflow is guarded so it never runs: the trigger requires both a tag AND the
+# repo-level variable DAXIE_RELEASE_ENABLED=true, which is unset before M12.
+#
+# Keeping the file present (a) reserves the workflow name and (b) lets M12 fill in the
+# jobs without a "where does release live?" hunt. Do NOT enable before the cosign /
+# environment / PAT plumbing in §9.5 exists.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: release guard (disabled until M12)
+    # The job only proceeds for an actual tag AND an explicit opt-in repo variable.
+    # Both conditions are false in M0, so this workflow is inert.
+    if: github.ref_type == 'tag' && vars.DAXIE_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: not yet implemented
+        run: |
+          echo "The release pipeline activates at M12 (design §9.5)."
+          echo "It will require: keyless cosign, environment: release, the"
+          echo "HOMEBREW_TAP_GITHUB_TOKEN fine-grained PAT, contents/packages/id-token"
+          echo "write scopes, and the pre-approval asset-name gate."
+          exit 1
+
+  # ── M12 jobs (sketch; fill in per §9.5) ──
+  # verify:        re-run unit + anvil + pre-approval asset-name gate (BEFORE approval)
+  # goreleaser:    needs: verify; environment: release; permissions: contents/packages/id-token: write
+  # cask-publish:  needs: goreleaser; stable-only; holds HOMEBREW_TAP_GITHUB_TOKEN
+  # provenance:    SLSA provenance for archives + images
+  # install-smoke / install-smoke-cosign / image-smoke: post-publication verification

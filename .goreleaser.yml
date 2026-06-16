@@ -1,0 +1,123 @@
+# .goreleaser.yml — Daxie (design §9.4).
+#
+# M0 GATE: `goreleaser build --snapshot --clean` produces all SIX target binaries
+# (darwin/linux/windows × amd64/arm64), CGO_ENABLED=0, with internal/version vars
+# injected via ldflags. `goreleaser check` is also green.
+#
+# The full release pipeline (cosign signing, SBOMs, OCI images, GitHub release,
+# Homebrew cask) is M12 — those stanzas are kept here COMMENTED so this file is the
+# complete eventual config and the snapshot build never attempts to sign. Uncomment
+# them at M12 (design §9.4 has the exact, paste-ready content).
+version: 2
+
+project_name: daxie
+
+before:
+  hooks:
+    # Non-mutating integrity checks only — NEVER `go mod tidy` in the release path.
+    - go mod verify
+    - go mod download
+
+builds:
+  - id: daxie
+    main: ./cmd/daxie
+    binary: daxie
+    env:
+      - CGO_ENABLED=0 # §7a container hygiene: fully static, pure-Go deps
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64 # full 6-target matrix incl. windows/arm64
+    flags:
+      - -trimpath
+      - -buildvcs=false # required for byte-identity (Go 1.18+ auto-stamps vcs.modified)
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/daxie/internal/version.Version={{ .Version }}
+      - -X github.com/daxchain-io/daxie/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/daxchain-io/daxie/internal/version.Date={{ .CommitDate }} # commit date, NOT .Date (reproducibility)
+
+archives:
+  - id: daxie
+    ids:
+      - daxie
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+  # M12: extra_files covers the signed install.sh once it exists.
+  # extra_files:
+  #   - glob: scripts/install.sh
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# M12 RELEASE STANZAS — present for completeness, COMMENTED so the M0 snapshot
+# build never signs/uploads. Content matches design §9.4 verbatim; uncomment at M12.
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# signs:
+#   - cmd: cosign
+#     args:
+#       - sign-blob
+#       - "--output-signature=${signature}"
+#       - "--output-certificate=${certificate}"
+#       - "--yes"
+#       - "${artifact}"
+#     artifacts: checksum # keyless cosign over checksums.txt
+#
+# sboms:
+#   - artifacts: archive
+#
+# dockers_v2:
+#   - id: daxie
+#     dockerfile: Dockerfile.release # COPY-only; goreleaser stages the prebuilt binary per $TARGETPLATFORM
+#     images:
+#       - ghcr.io/daxchain-io/daxie
+#     platforms:
+#       - linux/amd64
+#       - linux/arm64
+#     tags:
+#       - "{{ .Version }}"
+#       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+#       - "{{ if not .Prerelease }}latest{{ end }}"
+#
+# docker_signs:
+#   - id: daxie-image
+#     cmd: cosign
+#     artifacts: "" # '' = dockers_v2 images
+#     args:
+#       - sign
+#       - "--yes"
+#       - "${artifact}"
+#
+# release:
+#   github:
+#     owner: daxchain-io
+#     name: daxie
+#   prerelease: auto
+#   mode: replace # ONLY for a release whose core artifacts never finished publishing
+#   extra_files:
+#     - glob: scripts/install.sh
+#
+# homebrew_casks:
+#   - name: daxie
+#     skip_upload: true # render-only; cask-publish pushes
+#     repository:
+#       owner: daxchain-io
+#       name: homebrew-daxie

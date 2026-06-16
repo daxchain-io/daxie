@@ -1,0 +1,65 @@
+# Install-script / packaging-config CI (design §9.5). MINIMAL in M0: the real
+# install.sh and its install-smoke matrix land at M12. Today this job is the
+# config-drift killer — it runs `goreleaser check` and fails on ANY deprecation
+# warning (the allowlist is empty because the config is already on dockers_v2),
+# plus shellcheck over the demo script (and over install.sh once it exists at M12).
+name: CI install-script
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".goreleaser.yml"
+      - "Dockerfile.release"
+      - "docs/demos/**"
+      - "scripts/**"
+      - ".github/workflows/ci-install-script.yml"
+  pull_request:
+    paths:
+      - ".goreleaser.yml"
+      - "Dockerfile.release"
+      - "docs/demos/**"
+      - "scripts/**"
+      - ".github/workflows/ci-install-script.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  goreleaser-check:
+    name: goreleaser check (no deprecations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          version: "~> v2"
+          args: check
+      - name: fail on any deprecation warning
+        # `goreleaser check` exits 0 even with deprecations; grep the rendered config
+        # for the deprecation marker so drift onto a deprecated stanza fails the build.
+        # The allowlist is empty: this config is on the current (non-deprecated) schema.
+        run: |
+          if goreleaser check 2>&1 | grep -i "deprecat"; then
+            echo "::error::goreleaser reported a deprecation; the allowlist is empty"
+            exit 1
+          fi
+
+  shellcheck:
+    name: shellcheck demo scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck docs/demos/*.sh
+          # M12: shellcheck scripts/install.sh too.
+
+  # ── M12: --snapshot build → local http.server → real install assertion, and the
+  #         alpine/debian/ubuntu/fedora/macos install-smoke matrix (gated on "does a
+  #         release exist yet"). Not present in M0 (no install.sh, no published tag).

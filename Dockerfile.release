@@ -1,0 +1,23 @@
+# Dockerfile.release — COPY-only distroless image for the Daxie binary (design §9.4).
+#
+# goreleaser stages the prebuilt, CGO-free binary per $TARGETPLATFORM; this file only
+# copies it. The image is built at M12 (dockers_v2 stanza in .goreleaser.yml); it is
+# present now so the release file set is complete.
+#
+# distroless/static (not scratch): Daxie's only outbound traffic is HTTPS JSON-RPC and
+# scratch carries no CA roots. Non-root uid 65532. Pinned by digest so the supply chain
+# is reproducible (design §8/§9: supply-chain integrity is a feature).
+#
+# Digest below is a placeholder to be pinned at M12 against the then-current
+# gcr.io/distroless/static-debian12:nonroot. Build/sign happen at M12 only.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# goreleaser dockers_v2 places the per-platform binary at the build context root.
+COPY daxie /usr/bin/daxie
+
+USER 65532:65532
+
+# Bare `docker run` prints help instead of hanging on empty stdin.
+# v1.1 flips this to ["mcp","serve","--transport","http"].
+ENTRYPOINT ["/usr/bin/daxie"]
+CMD ["--help"]
