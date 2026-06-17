@@ -225,18 +225,25 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0 # need tag history for the latest-tag probe
-      - name: Resolve latest existing stable tag
+      - name: Resolve latest PUBLISHED stable release
         id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Newest tag the repo has actually cut, prereleases excluded. Empty
-          # output ⇒ the smoke matrix below skips itself (no release to test).
-          tag="$(git tag --list 'v*.*.*' --sort=-version:refname \
-            | grep -Ev -- '-(beta|rc)\.' | head -n 1 || true)"
+          # Newest PUBLISHED stable RELEASE (not merely a git tag): the smoke
+          # matrix downloads release ASSETS, which exist only once the release
+          # pipeline has published them. A git tag with no published release
+          # (every tag so far, until M12's release pipeline is enabled) has no
+          # assets and would 404. Empty output ⇒ the smoke matrix skips itself.
+          tag="$(gh release list --limit 30 \
+            --json tagName,isDraft,isPrerelease \
+            --jq 'map(select(.isDraft==false and .isPrerelease==false)) | .[0].tagName // ""' \
+            2>/dev/null || true)"
           if [ -z "$tag" ]; then
-            echo "no stable release tag found — smoke matrix will be a no-op"
+            echo "no published stable release found — smoke matrix will be a no-op"
           else
-            echo "Using tag: $tag"
+            echo "Using published release: $tag"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 

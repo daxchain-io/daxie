@@ -2,7 +2,7 @@
 # bumps them). CGO is off everywhere (pure-Go deps, §9.4).
 #
 # Jobs:
-#   lint              - gofmt diff, go vet, golangci-lint (incl. depguard matrix), go-arch-lint
+#   lint              - gofmt diff, go vet, golangci-lint (incl. depguard matrix; arch_test.go is authoritative)
 #   test              - go test -race ./... on ubuntu (incl. arch_test.go + determinism_test.go)
 #   test-cross-os     - go test ./... on macos + windows + windows-arm64 (the *_unix/_windows code)
 #   cross-compile     - go build ./cmd/daxie for all six GOOS/GOARCH with CGO_ENABLED=0
@@ -52,10 +52,12 @@ jobs:
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
           version: v2.12.2
-      - name: go-arch-lint
-        run: |
-          go install github.com/fe3dback/go-arch-lint@latest
-          "$(go env GOPATH)/bin/go-arch-lint" check
+      # NOTE: the import-matrix / one-core-two-frontends rule is enforced
+      # AUTHORITATIVELY by internal/arch_test.go (run in the test jobs) and, as a
+      # best-effort subset, by golangci-lint's depguard above. The separate
+      # go-arch-lint tool was removed: its .go-arch-lint.yml schema drifts against
+      # the unpinned @latest binary (e.g. deps.providers.mayNotDependOn rejected),
+      # and it duplicated arch_test.go's coverage.
 
   test:
     name: test (race, ubuntu)
@@ -138,7 +140,7 @@ jobs:
           check-latest: true
       - uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
         with:
-          version: "~> v2"
+          version: "v2.16.0"
           args: build --snapshot --clean
 
   demo:

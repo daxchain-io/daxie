@@ -45,6 +45,23 @@ func withEnv(t *testing.T, env map[string]string) {
 			t.Setenv(k, v)
 		}
 	}
+	// On Windows the default path resolution uses %USERPROFILE%/%APPDATA%/
+	// %LOCALAPPDATA%, not $HOME. When a test sets only HOME (the POSIX base) and
+	// does not pin the Windows bases, derive them from HOME so default-path tests
+	// (which rely on the platform default rather than DAXIE_* / flags) stay
+	// hermetic and pass on the Windows CI runners. No effect on POSIX resolution,
+	// which reads HOME/XDG_*.
+	if home := env["HOME"]; home != "" {
+		if _, ok := env["USERPROFILE"]; !ok {
+			t.Setenv("USERPROFILE", home)
+		}
+		if _, ok := env["APPDATA"]; !ok {
+			t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+		}
+		if _, ok := env["LOCALAPPDATA"]; !ok {
+			t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+		}
+	}
 }
 
 func inManaged(key string) bool {
