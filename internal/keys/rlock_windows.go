@@ -38,6 +38,16 @@ const (
 // bounded retry-read, which on its own tolerates the rename race. A real timeout
 // (a long-held exclusive lock) surfaces as state.lock_timeout.
 func (s *Store) readKeystoreFile(path string) ([]byte, error) {
+	// If THIS Store already holds the exclusive index.lock (a mutation reading its
+	// own meta.json/keystore.json), do NOT take the shared RLock: Windows
+	// LockFileEx is mandatory and not re-entrant across handles, so an
+	// exclusive-then-shared acquire on the same .lock from the same process
+	// deadlocks until timeout (state.lock_timeout / exit 11). The exclusive lock
+	// already serializes; readWithAccessDeniedRetry covers the rename race alone.
+	if s.holdingExclusive() {
+		return readWithAccessDeniedRetry(path)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
 	defer cancel()
 

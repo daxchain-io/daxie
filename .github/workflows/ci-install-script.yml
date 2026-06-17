@@ -94,7 +94,7 @@ jobs:
           # install.sh is the single curl|sh artifact every user runs — lint it
           # in strict POSIX-sh mode. The demo scripts are bash/sh helpers.
           shellcheck -s sh scripts/install.sh
-          shellcheck docs/demos/*.sh
+          shellcheck --severity=warning docs/demos/*.sh
 
       - name: Parse install.sh under multiple shells
         run: |

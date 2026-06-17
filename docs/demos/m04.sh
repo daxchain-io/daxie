@@ -251,7 +251,6 @@ KEY_FILE="$WORK/anvilkey"
 printf '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n' > "$KEY_FILE"
 chmod 0600 "$KEY_FILE"
 "$DAXIE" account import funded --key-file "$KEY_FILE" --yes >/dev/null
-FUNDED="$("$DAXIE" account show funded --json | sed -n 's/.*"address": *"\(0x[0-9a-fA-F]*\)".*/\1/p')"
 RECIP="0x000000000000000000000000000000000000C0DE"
 
 # Re-seal the policy for this network: allow the recipient, cap per-tx at 0.1 ETH,

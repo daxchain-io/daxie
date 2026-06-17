@@ -187,7 +187,6 @@ PERMIT_BC="$(grep -o '"0x[0-9a-f]*"' "$EC_FILE" | tr -d '"' | head -1)"
 TOKEN="$(cast send --rpc-url "$ANVIL_URL" --private-key "$OWNER_KEY" --create "$PERMIT_BC" --json \
   | sed -n 's/.*"contractAddress":"\([^"]*\)".*/\1/p')"
 [ -n "$TOKEN" ] || fail "permit token deploy produced no address"
-TOKEN_DEPLOYED=1
 echo "-- permit token deployed at $TOKEN"
 
 SPENDER=0x70997970C51812dc3A010C7d01b50e0d17dc79C8

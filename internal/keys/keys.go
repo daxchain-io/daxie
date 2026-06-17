@@ -29,6 +29,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/daxchain-io/daxie/internal/fsx"
@@ -54,6 +55,27 @@ type Store struct {
 	dir   string
 	clock func() time.Time
 	light bool
+
+	// exclMu guards exclHeld, a flag set while THIS Store holds the exclusive
+	// index.lock for a mutation. On Windows the per-read shared RLock
+	// (rlock_windows.go) is SKIPPED while it is held: LockFileEx is mandatory and
+	// not re-entrant across handles, so a mutation reading meta.json/keystore.json
+	// under its own exclusive lock would otherwise deadlock (state.lock_timeout /
+	// exit 11). POSIX reads are lock-free, so the flag is consulted only there.
+	exclMu   sync.Mutex
+	exclHeld bool
+}
+
+// holdingExclusive reports whether this Store currently holds the exclusive
+// index.lock (set across a lock()/unlock() span). It is read only by the Windows
+// reader path (rlock_windows.go); on other platforms reads are lock-free, so the
+// linter sees it as unused there — that is correct and expected.
+//
+//nolint:unused // consulted only by the windows build (rlock_windows.go)
+func (s *Store) holdingExclusive() bool {
+	s.exclMu.Lock()
+	defer s.exclMu.Unlock()
+	return s.exclHeld
 }
 
 // lockTimeout bounds index.lock acquisition; on expiry callers see
@@ -154,7 +176,19 @@ func (s *Store) lock(ctx context.Context) (func(), error) {
 		}
 		return nil, errKeys(CodeStateLockTimeout, "cannot acquire the keystore lock: "+err.Error())
 	}
-	return unlock, nil
+	// Mark the exclusive lock held so internal reads (loadMeta/loadManifest/…)
+	// skip the per-read shared RLock on Windows and avoid the same-process
+	// LockFileEx deadlock (§7.9). Harmless on POSIX (the flag is read only by the
+	// windows reader). Cleared when the returned unlock runs.
+	s.exclMu.Lock()
+	s.exclHeld = true
+	s.exclMu.Unlock()
+	return func() {
+		s.exclMu.Lock()
+		s.exclHeld = false
+		s.exclMu.Unlock()
+		unlock()
+	}, nil
 }
 
 // ensureDirs creates the keystore dir and its wallets/ and accounts/ subdirs with

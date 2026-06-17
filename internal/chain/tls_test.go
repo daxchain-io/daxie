@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -139,6 +140,15 @@ func TestBuildTLSConfig_CertWithoutKey(t *testing.T) {
 func TestBuildTLSConfig_InsecureKeyPerms(t *testing.T) {
 	if os.Getenv("DAXIE_SKIP_PERM_CHECK") == "1" {
 		t.Skip("perm check disabled via env")
+	}
+	if runtime.GOOS == "windows" {
+		// This tripwire is driven by POSIX mode bits: writeTestCertKey chmod 0o644
+		// to make the key world-readable. On Windows os.Chmod only toggles the
+		// read-only bit and does NOT create a world-readable DACL, so the file
+		// keeps its owner-only inherited ACL and CheckPerms correctly returns nil —
+		// the premise can't be set up via chmod. The Windows DACL insecure-perms
+		// path is exercised by internal/fsx's own CheckPerms test instead.
+		t.Skip("POSIX mode bits don't model a Windows world-readable DACL; covered by internal/fsx perms test")
 	}
 	dir := t.TempDir()
 	cert, key, _ := writeTestCertKey(t, dir, 0o644) // world-readable key

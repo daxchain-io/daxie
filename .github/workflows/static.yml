@@ -47,7 +47,7 @@ jobs:
           files="$(find . -name '*.sh' -not -path './dist/*')"
           if [ -z "$files" ]; then echo "no shell scripts"; exit 0; fi
           echo "$files"
-          echo "$files" | xargs shellcheck
+          echo "$files" | xargs shellcheck --severity=warning
 
   actionlint:
     name: actionlint

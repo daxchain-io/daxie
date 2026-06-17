@@ -164,14 +164,21 @@ expect_exit 10 "$DAXIE" network show base              # gone
 expect_exit 2 "$DAXIE" network remove mainnet --yes
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. balance flag plumbing — M5/M7 paths fail clean (never faked)
+# 7. balance flag plumbing — the M5/M7 flags are wired; usage still fails clean
+#    (pre-dial, no network). By M12 the SUCCESS paths are real and need a live
+#    chain: --all is driven against anvil in SECTION B below, and --token / ENS
+#    resolution are exercised hermetically by m05.sh / m07.sh. An M2 demo must
+#    never depend on live mainnet, so those success paths are NOT re-driven here —
+#    only the pre-dial usage guards, which are deterministic and network-free.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "-- balance (M5/M7 paths fail clean)"
+echo "-- balance (flags wired; usage fails clean before any dial)"
 RAW="0x52908400098527886E0F7030069857D2E4169EE7"
-expect_exit 2 "$DAXIE" balance "$RAW" --token USDC     # M5
-expect_exit 2 "$DAXIE" balance "$RAW" --all            # M5
-expect_exit 2 "$DAXIE" balance vitalik.eth             # M7 (ENS)
-expect_exit 2 "$DAXIE" balance                         # no account, no default
+# --token AND --all together ⇒ mutually-exclusive usage error, raised BEFORE any
+# dial — proves both M5 flags parse without reaching a network (usage.bad_flags).
+expect_exit 2 "$DAXIE" balance "$RAW" --token USDC --all
+# no account argument and no default account ⇒ usage error, also pre-dial
+# (usage.no_account); never an opaque network call against the default endpoint.
+expect_exit 2 "$DAXIE" balance
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. read-only config behavior — a mutation on a read-only mount → exit 10
@@ -233,6 +240,12 @@ contains "$out" '"wei": "10000000000000000000000"' "funded balance wei"
 # the human form prints the ETH value as the essential output
 human="$("$DAXIE" balance "$FUNDED")"
 contains "$human" '10000 ETH' "human balance missing 10000 ETH"
+
+# the --all success path (M5): with no tokens registered it reaches exit 0 and
+# reports ETH alone — exercised here against anvil, never against live mainnet.
+allout="$("$DAXIE" balance "$FUNDED" --all --json)"
+contains "$allout" '"symbol": "ETH"' "balance --all missing ETH"
+contains "$allout" '"wei": "10000000000000000000000"' "balance --all funded wei"
 
 echo "-- chain-id MISMATCH refusal (exit 12)"
 # An endpoint whose declared network's chain-id is WRONG must refuse rpc test.
