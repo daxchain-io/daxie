@@ -12,32 +12,76 @@ import (
 // resolved the limit and fees (so MaxGasWei = gasLimit × maxFeePerGas is final)
 // and hands it to Evaluate (dry-run) or Reserve (the durable pre-sign path).
 //
-// M3 (the always-allow stub) reads only Account/Dest/SpendWei/MaxGasWei — enough
-// to write a faithful durable reservation so the §5.1 ordering and the §5.1
-// reconciliation lifecycle are exercised now. The remaining fields are populated
-// by the service kernel today and CONSUMED by M4 without any signature change:
-//
-//   - MaxFeePerGas — the §4.3 stage-8 gas-cap check (policy.max-gas-price).
-//   - Kind         — the classified journal.Kind string, for the §4.3 stage-3c
-//     fail-closed token rule / approval handling.
-//   - Token        — the token contract (lowercase 0x) for the token allowlist.
-//   - IsRBFDelta   — speedup/cancel: only the positive gas delta counts toward
-//     the rolling-24h window (the value is NOT re-counted, §5.5).
-//   - Acked        — the --unlimited --yes / acknowledgeUnlimited ceremony bit.
-//
-// No float anywhere (§2.5): every amount is a *big.Int in wei.
+// The M3 stub read only Account/Dest/SpendWei/MaxGasWei. M4 consumes the rest of
+// the §4.2 model WITHOUT changing the fields service already sets — every M4
+// field is additive and default-zero until the producing milestone (M5/M7/M9)
+// fills it. No float anywhere (§2.5): every amount is a *big.Int in wei.
 type Check struct {
-	Account   common.Address // the signing account (the spend bucket key in M4)
-	Dest      common.Address // the resolved recipient/spender (the allowlist subject in M4)
-	SpendWei  *big.Int       // native value moved; nil == zero
+	// ── M3 fields (FROZEN — service sets these today) ──
+	Account   common.Address // the signing account (= From; the spend bucket key)
+	Dest      common.Address // the resolved recipient/spender (= To; the allowlist subject)
+	SpendWei  *big.Int       // native ETH value moved; nil == zero. NEVER a token amount.
 	MaxGasWei *big.Int       // worst-case gasLimit × maxFeePerGas; nil == zero
 
-	// ── fields the kernel fills today, M4 consumes (no signature change) ──
-	MaxFeePerGas *big.Int // for the M4 gas-cap check; M3 ignores
-	Kind         string   // journal.Kind string (the classified kind); M4 uses it
-	Token        string   // token contract (lowercase 0x); "" for ETH; M4 uses it
-	IsRBFDelta   bool     // speedup/cancel: only the positive gas delta counts (M4)
-	Acked        bool     // the unlimited-approval acknowledgement (M4)
+	MaxFeePerGas *big.Int // gas-cap check (stage 8); nil == zero
+	Kind         string   // journal.Kind string (M3 sets it; M4 maps to the Kind enum)
+	Token        string   // token contract (lowercase 0x); "" for ETH
+	IsRBFDelta   bool     // speedup/cancel: only the positive gas delta counts (§5.5)
+	Acked        bool     // the --unlimited --yes / acknowledgeUnlimited ceremony bit
+
+	// ── M4 additive (default-zero until M5/M7/M9 set them; the pipeline reads them) ──
+	Network      string         // per-network bucket + per-network rule key (§4.1)
+	KindEnum     Kind           // the classified Kind (set by service from Kind or ClassifyTypedData)
+	ToSrc        ToSource       // SourceRawAddress|ENS|Contact|Self
+	ToInput      string         // exactly what the user typed (for pin-drift messaging)
+	ENSName      string         // non-empty when To came from ENS → stage-4 pin check
+	ENSResolved  common.Address // the FRESH pre-lock resolution service hands in (engine only compares)
+	Asset        string         // "eth" | lowercase token/NFT contract
+	TokenAmt     *big.Int       // raw token base units (display only in v1)
+	Unlimited    bool           // unbounded approval/permit (sentinel match)
+	AccountNonce *uint64        // RBF supersession
+}
+
+// Kind is the §4.2 request kind. There is NO opaque KindContractCall: arbitrary
+// calldata is classified into one of these or denied (the §4.3 stage-5b gate,
+// M10). The string-to-enum mapping lives in kindOf so service's journal.Kind
+// string maps in without service knowing the enum.
+type Kind int
+
+const (
+	KindUnknown  Kind = iota // unset / not yet classified
+	KindTransfer             // ETH / ERC-20 / ERC-721 / ERC-1155 send
+	KindApprove              // approve / revoke / setApprovalForAll (spend-equivalent)
+	KindPermit               // EIP-2612 / DAI / Permit2 (spend-equivalent, gasless — never Reserve)
+)
+
+// ToSource records how the destination/spender was supplied, so stage 4 knows
+// whether a fresh-resolution pin check applies.
+type ToSource int
+
+const (
+	SourceRawAddress ToSource = iota // a literal 0x… — no drift check
+	SourceENS                        // an ENS name → fresh-resolution pin check
+	SourceContact                    // a contact name → snapshot pin check
+	SourceSelf                       // an own account (include_self path)
+)
+
+// effectiveKind returns the classified Kind, falling back to mapping the M3
+// journal.Kind string when the enum was not set by an M4 producer. Defaults to
+// KindTransfer (the broadcasting-value path) so the ETH limits always apply.
+func (c Check) effectiveKind() Kind {
+	if c.KindEnum != KindUnknown {
+		return c.KindEnum
+	}
+	switch c.Kind {
+	case "approve", "revoke":
+		return KindApprove
+	case "permit":
+		return KindPermit
+	default:
+		// transfer, send, cancel, speedup, contract, "" — all broadcasting value paths.
+		return KindTransfer
+	}
 }
 
 // spendWei returns the native value as a non-nil big.Int (0 if unset).
@@ -56,36 +100,50 @@ func (c Check) maxGasWei() *big.Int {
 	return new(big.Int).Set(c.MaxGasWei)
 }
 
-// Decision is the policy verdict (§4.9). M3 always returns {Allowed:true}. When
-// M4 denies, Code is the canonical policy.denied.* string (e.g.
-// "policy.denied.day_limit", "policy.denied.gas_cap") and Reason is the human
-// one-liner; the service kernel renders a denial as a domain.Error whose Code is
-// Decision.Code (exit 3) — the numeric mapping already exists in domain (§5.7).
+// maxFeePerGas returns the gas-cap subject as a non-nil big.Int (0 if unset).
+func (c Check) maxFeePerGas() *big.Int {
+	if c.MaxFeePerGas == nil {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Set(c.MaxFeePerGas)
+}
+
+// Decision is the policy verdict (§4.9). When denied, Code is the
+// highest-precedence canonical policy.denied.* string and Reason is the human
+// one-liner; Violations carries EVERY accumulated violation (stages 3-8) for
+// details.violations[]; RetryAfter is an RFC3339 instant for day_limit; Data is
+// the per-code details payload the frontends surface. The service kernel renders
+// a denial as a domain.Error whose Code is Decision.Code (exit 3 via the
+// policy.denied prefix already in domain).
 type Decision struct {
-	Allowed bool
-	Code    string // canonical policy.denied.* string; "" when allowed
-	Reason  string // human reason; "" when allowed
+	Allowed    bool
+	Code       string         // canonical policy.denied.* ("" when allowed)
+	Reason     string         // human one-liner ("" when allowed)
+	Violations []Violation    // every accumulated violation for details.violations[]
+	RetryAfter string         // RFC3339 instant for day_limit (§4.9); "" otherwise
+	Data       map[string]any // the §4.9 per-code details payload
+}
+
+// Violation is one accumulated policy refusal (stages 3-8 accumulate; the highest
+// precedence becomes Decision.Code, but all ride in Decision.Violations).
+type Violation struct {
+	Code   string         `json:"code"`
+	Reason string         `json:"reason"`
+	Data   map[string]any `json:"data,omitempty"`
 }
 
 // TypedDataClass is the §4.2 classification result for an EIP-712 typed message
-// (sign typed). M3 ships a stub that recognizes nothing (isSpend=false), so the
-// typed-data gate is the M4 / M9 concern; the type is declared now so the service
-// signature that threads classification through authorize is stable.
+// (sign typed). M4 fills IsSpend/Kind/Spender/Unlimited from the EIP-2612 / DAI /
+// Permit2 recognizers; a chain mismatch sets Denied with the reason so the typed
+// path can refuse without a second pass.
 type TypedDataClass struct {
-	IsSpend bool   // true once M4's Permit/Permit2/DAI recognizers match
-	Kind    string // the spend-equivalent kind when IsSpend (e.g. "approve")
-	Spender string // the recognized spender (lowercase 0x) when IsSpend
-}
-
-// ClassifyTypedData is the §4.2 typed-data recognizer seam. M3 STUB: recognizes
-// nothing and returns {IsSpend:false}. M4/M9 fill in the Permit / Permit2 / DAI
-// permit recognizers here WITHOUT changing the signature — the service kernel's
-// single classification step (one step, two sources: typed data + raw calldata,
-// §4.3 stage 2) already calls through this shape.
-func (e *Engine) ClassifyTypedData(primaryType string, domain map[string]any, message map[string]any) (TypedDataClass, error) {
-	_ = e
-	_ = primaryType
-	_ = domain
-	_ = message
-	return TypedDataClass{IsSpend: false}, nil
+	IsSpend    bool   // true once a Permit/Permit2/DAI recognizer matched
+	Kind       string // the spend-equivalent kind when IsSpend (e.g. "approve")
+	Spender    string // the recognized spender (lowercase 0x) when IsSpend
+	Unlimited  bool   // the recognized amount/deadline is an unlimited sentinel
+	ChainID    int64  // the domain chainId the recognizer read
+	Verifying  string // domain.verifyingContract (lowercase 0x) the recognizer matched
+	Primary    string // the matched primaryType
+	Denied     bool   // a chain mismatch (or shape on a hostile domain) ⇒ hard deny
+	DenyReason string // "chain_mismatch" when Denied
 }

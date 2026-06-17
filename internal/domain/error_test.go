@@ -211,7 +211,13 @@ func TestRetryableDefaults(t *testing.T) {
 		{"tx.replaced", true},
 		{"state.lock_timeout", true},
 		{"usage.bad_address", false},
-		{"policy.denied.day_limit", false},
+		// §4.9: day_limit (the window ages out; retry_after rides along) and gas_cap
+		// (the fee market moves) are the two retryable policy denials. Every other
+		// policy.denied.* defaults false (retrying without operator action is pointless).
+		{"policy.denied.day_limit", true},
+		{"policy.denied.gas_cap", true},
+		{"policy.denied.tx_limit", false},
+		{"policy.denied.allowlist", false},
 		{"ref.not_found", false},
 		{"internal", false},
 	}

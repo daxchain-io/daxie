@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/daxchain-io/daxie/internal/domain"
+	"github.com/daxchain-io/daxie/internal/policyseal"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -19,9 +20,29 @@ func fixedClock() func() time.Time {
 	return func() time.Time { return t }
 }
 
+// mutableClock returns an injected clock the test can ADVANCE (no sleeps, no wall
+// reads) plus its backing pointer — so a test can Reserve+Commit at t0, advance
+// past the 24h window, and assert debits age out of the rolling-24h sum. The
+// engine reads e.clock() on every call, so mutating *p is observed live.
+func mutableClock() (func() time.Time, *time.Time) {
+	t := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	p := &t
+	return func() time.Time { return *p }, p
+}
+
+// newEngine opens an engine in OPT-IN mode (no anchor, no policy) — the M3
+// lifecycle tests run here, where the verdict is unconditional allow so the
+// reservation/orphan plumbing is exercised in isolation from the M4 gates.
 func newEngine(t *testing.T) *Engine {
 	t.Helper()
-	e, err := Open(t.TempDir(), fixedClock())
+	return openOptIn(t, t.TempDir())
+}
+
+// openOptIn opens an engine over dir with no anchor (anchorFound=false) — the
+// opt-in no-op-allow mode (§4 intro). Reused by the M3 lifecycle tests.
+func openOptIn(t *testing.T, dir string) *Engine {
+	t.Helper()
+	e, err := Open(dir, fixedClock(), policyseal.Anchor{}, false)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -37,9 +58,10 @@ func sampleCheck() Check {
 	}
 }
 
-// TestEvaluateAlwaysAllows confirms the M3 stub verdict is unconditional allow and
-// writes NO reservation (the check-only path backing --dry-run).
-func TestEvaluateAlwaysAllows(t *testing.T) {
+// TestEvaluateNoPolicyAllows confirms the opt-in rule (§4 intro): with NO anchor
+// pinned AND no policy.json, the verdict is unconditional allow and writes NO
+// reservation (guardrails are opt-in until the first `policy set`).
+func TestEvaluateNoPolicyAllows(t *testing.T) {
 	e := newEngine(t)
 	ctx := context.Background()
 
@@ -48,7 +70,7 @@ func TestEvaluateAlwaysAllows(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if !dec.Allowed {
-		t.Fatalf("Evaluate returned Allowed=false; the M3 stub must always allow")
+		t.Fatalf("Evaluate returned Allowed=false; opt-in (no anchor, no policy) must allow")
 	}
 	if dec.Code != "" {
 		t.Fatalf("allowed Decision must carry an empty Code, got %q", dec.Code)
@@ -70,10 +92,7 @@ func TestEvaluateAlwaysAllows(t *testing.T) {
 func TestReserveIsDurable(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
-	e, err := Open(dir, fixedClock())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	e := openOptIn(t, dir)
 	c := sampleCheck()
 	r, err := e.Reserve(ctx, c)
 	if err != nil {
@@ -97,10 +116,7 @@ func TestReserveIsDurable(t *testing.T) {
 
 	// A second engine over the same dir must see the durable reservation as an
 	// orphan (it survives process restart — the durable-before-sign property).
-	e2, err := Open(dir, fixedClock())
-	if err != nil {
-		t.Fatalf("re-Open: %v", err)
-	}
+	e2 := openOptIn(t, dir)
 	orphans, err := e2.Orphans(ctx)
 	if err != nil {
 		t.Fatalf("Orphans after re-Open: %v", err)
@@ -222,7 +238,7 @@ func TestSettleActualShrinks(t *testing.T) {
 	}
 
 	actual := big.NewInt(420_000_000_000_000) // 21000 × 20 gwei, far below worst case
-	if err := e.SettleActual(ctx, r.ID, actual); err != nil {
+	if err := e.SettleActual(ctx, r.ID, actual, false); err != nil {
 		t.Fatalf("SettleActual: %v", err)
 	}
 
@@ -236,7 +252,7 @@ func TestSettleActualShrinks(t *testing.T) {
 
 	// Down-only: a later, larger actual must NOT re-inflate.
 	bigger := big.NewInt(1_000_000_000_000_000)
-	if err := e.SettleActual(ctx, r.ID, bigger); err != nil {
+	if err := e.SettleActual(ctx, r.ID, bigger, false); err != nil {
 		t.Fatalf("second SettleActual: %v", err)
 	}
 	got = mustLoad(t, e, r.ID)
@@ -262,7 +278,7 @@ func TestSettleActualClampsToWorstCase(t *testing.T) {
 	}
 
 	tooBig := new(big.Int).Mul(c.MaxGasWei, big.NewInt(10))
-	if err := e.SettleActual(ctx, r.ID, tooBig); err != nil {
+	if err := e.SettleActual(ctx, r.ID, tooBig, false); err != nil {
 		t.Fatalf("SettleActual: %v", err)
 	}
 	got := mustLoad(t, e, r.ID)
@@ -281,7 +297,7 @@ func TestCommitMissingIsIntegrityError(t *testing.T) {
 	err := e.Commit(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FAV", hash)
 	assertCode(t, err, "tx.integrity.reservation_missing", domain.ExitIntegrity)
 
-	err = e.SettleActual(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FAV", big.NewInt(1))
+	err = e.SettleActual(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FAV", big.NewInt(1), false)
 	assertCode(t, err, "tx.integrity.reservation_missing", domain.ExitIntegrity)
 
 	err = e.Commit(ctx, "", hash)

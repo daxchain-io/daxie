@@ -20,7 +20,9 @@ import (
 	"github.com/daxchain-io/daxie/internal/journal"
 	"github.com/daxchain-io/daxie/internal/keys"
 	"github.com/daxchain-io/daxie/internal/policy"
+	"github.com/daxchain-io/daxie/internal/policyseal"
 	"github.com/daxchain-io/daxie/internal/registry"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // Service is the composed daxie core. ONE per process for the CLI and the stdio
@@ -176,7 +178,25 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	peng, err := policy.Open(paths.State, clock)
+	// Read the §4.6 trust root (policy-anchor.json) DIRECTLY from the config class —
+	// no Viper key, no env, no flag (the carve-out). config returns RAW BYTES;
+	// policyseal does the typed decode here (config stays free of the policyseal
+	// import). A missing anchor is the opt-in case (anchorFound=false ⇒ the engine
+	// is a no-op allow until a policy exists). A genuine read error fails Open
+	// (fail closed — a halted trust root must not silently start unguarded).
+	var anchor policyseal.Anchor
+	anchorRaw, anchorFound, aerr := paths.ReadAnchor()
+	if aerr != nil {
+		return nil, aerr
+	}
+	if anchorFound {
+		anchor, aerr = policyseal.ParseAnchor(anchorRaw)
+		if aerr != nil {
+			return nil, domain.Wrap("policy.seal_violation",
+				"the policy anchor is present but unparseable; signing is halted until it is repaired", aerr)
+		}
+	}
+	peng, err := policy.Open(paths.State, clock, anchor, anchorFound)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +236,15 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		// only a balance/rpc-test command reaches the network.
 		chains: newDialingProvider(cfg, opts.Network, opts.RPC),
 	}
+
+	// §4.1 "Limit scope": install the policy⊥keystore enumeration hook so the
+	// rolling-24h daily window AGGREGATES across every keystore account on a network
+	// (the unit of compromise is the keystore passphrase — a per-account cap would
+	// silently multiply max_day by the account count). policy may NOT import keys;
+	// service bridges it here, mirroring how selfSnapshot supplies self_addresses to
+	// admin mutations. The accounts set is network-independent in v1 (one keystore
+	// holds the addresses for every network), so the network arg is currently unused.
+	s.policy.SetAccountsHook(func(_ string) []common.Address { return s.selfSnapshot() })
 
 	// Drive the §5.1 restart reconciliation: bridge the journal verdict to policy's
 	// orphan surface (policy may NOT import journal; service composes both). It runs

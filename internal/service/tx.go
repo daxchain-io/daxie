@@ -211,10 +211,14 @@ func (s *Service) runSend(ctx context.Context, p domain.Principal, in *Intent, w
 			// Our tx mined at this nonce → accepted. Record the broadcast + commit the
 			// reservation and lease exactly like the accepted path.
 			st := domain.TxStatusPending
+			var gasWei *big.Int
 			if rcpt.Status == 0 {
 				st = domain.TxStatusReverted
+				// A revert settles gas to actual AND releases the native value (§4.4) —
+				// pass the receipt's actual gas so SettleActual shrinks gas correctly.
+				gasWei = actualGas(rcpt)
 			}
-			if serr := s.settle(ctx, a, a.hash, st, nil); serr != nil {
+			if serr := s.settle(ctx, a, a.hash, st, gasWei); serr != nil {
 				return domain.TxResult{}, serr
 			}
 			settled = true
@@ -299,11 +303,26 @@ func (s *Service) authorize(ctx context.Context, p domain.Principal, in Intent, 
 		MaxFeePerGas: perGasPrice(in.gas),
 		Kind:         string(in.kind),
 		IsRBFDelta:   in.replaces != nil,
+		// M4 additive wiring (§4.1/§4.3): the per-network spend bucket + rule key,
+		// and the ETH asset tag. Without Network the rolling-24h counter file path
+		// and the per-network limit overrides cannot key correctly. Sepolia spends
+		// never consume mainnet headroom.
+		Network: in.network,
+		Asset:   "eth",
+		// §4.4/§5.5 RBF supersession: EVERY send carries its pinned account_nonce so
+		// the counter entry is keyed by (network, from, account_nonce). The original
+		// send must store it so a later speedup/cancel (IsRBFDelta) can fold its
+		// candidate into the SAME entry (max-across-candidates) instead of
+		// double-counting value+gas in the rolling-24h window.
+		AccountNonce: &nonce,
 	}
 	reservation, err := s.policy.Reserve(ctx, check)
 	if err != nil {
 		_ = lease.Release()
-		return authorized{}, err // policy.denied.* (exit 3) — nothing signed
+		// §4.9 gas_cap: the engine is base-fee-blind (pure); the service overlays the
+		// LIVE base fee so the caller distinguishes "fee spike, retry" from "my flags
+		// are wrong". A no-op for every other denial code.
+		return authorized{}, overlayBaseFee(err, in.gas.BaseFee) // policy.denied.* (exit 3) — nothing signed
 	}
 	domain.Emit(sink, domain.Event{Kind: domain.EvPolicyOK, Stream: "stderr"})
 
@@ -363,8 +382,16 @@ func (s *Service) settle(ctx context.Context, a authorized, h common.Hash, st do
 	if err := s.policy.Commit(ctx, a.reservation.ID, h); err != nil {
 		return err
 	}
-	if st == domain.TxStatusConfirmed && gasWei != nil {
-		_ = s.policy.SettleActual(ctx, a.reservation.ID, gasWei)
+	// SettleActual shrinks the committed reservation's gas to actual on a settled
+	// receipt, and on a REVERT also releases the native value (§4.4: the EVM did not
+	// move it). Confirmed and reverted both settle gas; only reverted releases value.
+	switch st {
+	case domain.TxStatusConfirmed:
+		if gasWei != nil {
+			_ = s.policy.SettleActual(ctx, a.reservation.ID, gasWei, false)
+		}
+	case domain.TxStatusReverted:
+		_ = s.policy.SettleActual(ctx, a.reservation.ID, gasWei, true)
 	}
 
 	// Commit the nonce lease (next = nonce+1) and release the account lock.
@@ -615,6 +642,12 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 		MaxFeePerGas: perGasPrice(in.gas),
 		Kind:         string(in.kind),
 		IsRBFDelta:   in.replaces != nil,
+		Network:      in.network, // M4: per-network bucket/rule key (§4.1)
+		Asset:        "eth",
+		// §4.4/§5.5: carry the intended account_nonce so an RBF dry-run evaluates
+		// against the superseded entry (in.nonce is the pinned nonce on the RBF path,
+		// nil for a normal send — harmless then).
+		AccountNonce: in.nonce,
 	})
 	if err != nil {
 		return domain.TxResult{}, err
@@ -624,7 +657,14 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 		if code == "" {
 			code = domain.CodePolicyDenied
 		}
-		return domain.TxResult{}, domain.New(code, dec.Reason)
+		de := domain.New(code, dec.Reason)
+		if dec.Data != nil {
+			de = domain.WithData(de, dec.Data) // carry the §4.9 per-code payload + violations
+		}
+		if dec.RetryAfter != "" {
+			de = domain.WithData(de, map[string]any{"retry_after": dec.RetryAfter})
+		}
+		return domain.TxResult{}, overlayBaseFee(de, in.gas.BaseFee)
 	}
 	res := domain.TxResult{
 		Network:   in.network,
@@ -777,6 +817,23 @@ func parseEthAmount(s string) (*big.Int, error) {
 		return nil, domain.Wrap(domain.CodeUsage+".bad_amount", "invalid amount "+s, err)
 	}
 	return wei, nil
+}
+
+// overlayBaseFee enriches a policy.denied.gas_cap error with the LIVE network base
+// fee (§4.9): the pure engine cannot see the base fee, so the service — which
+// fetched it pre-lock for the gas estimate — overlays current_base_fee onto the
+// denial payload so the caller distinguishes "fee spike, retry later" from "my
+// flags are wrong". It is a no-op for a nil error, a non-domain error, any other
+// code, or a nil base fee.
+func overlayBaseFee(err error, baseFee *big.Int) error {
+	if err == nil || baseFee == nil {
+		return err
+	}
+	var de *domain.Error
+	if !errors.As(err, &de) || de.Code != domain.CodePolicyDeniedGasCap {
+		return err
+	}
+	return domain.WithData(de, map[string]any{"current_base_fee": baseFee.String()})
 }
 
 // destLabel renders the destination echo: the contact/ENS name if present, else

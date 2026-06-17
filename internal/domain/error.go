@@ -143,6 +143,28 @@ const (
 	// next_index that sits BELOW a materialized HD index — the restore-coupling /
 	// state-corruption guard that refuses to reuse a derivation slot. State class.
 	CodeKeystoreDerivationWatermark = "keystore.derivation_watermark" // exit 11
+
+	// ── M4 policy codes (§4.9). The exit mapping is via the prefix rule already in
+	// codeExit ("policy.denied" → 3; the seal/auth/state/rollback family → 8); these
+	// consts give the canonical sub-code SPELLINGS one home so the cli/service/policy
+	// never string-literal them inconsistently. tx_limit / day_limit / pin_drift are
+	// canonical; spend_limit / ens_pin are WITHDRAWN aliases (D7) — agents branch on
+	// the canonical strings.
+	// (CodePolicyDenied + CodePolicyDeniedGasCap are declared in tx_requests.go,
+	// which M3 authored; the rest of the §4.9 canonical sub-codes are added here.)
+	CodePolicyDeniedTxLimit     = "policy.denied.tx_limit"     // per-tx ETH limit
+	CodePolicyDeniedDayLimit    = "policy.denied.day_limit"    // rolling-24h ETH limit (retryable + retry_after)
+	CodePolicyDeniedAllowlist   = "policy.denied.allowlist"    // denylisted / not allowlisted
+	CodePolicyDeniedNoAllowlist = "policy.denied.no_allowlist" // limits set, no allowlist, token/approval
+	CodePolicyDeniedPinDrift    = "policy.denied.pin_drift"    // ENS/contact drift from the allow-time pin
+	CodePolicyDeniedTypedData   = "policy.denied.typed_data"   // unknown typed data / chain mismatch
+	CodePolicyDeniedUnlimited   = "policy.denied.unlimited_unacked"
+	CodePolicyDeniedContract    = "policy.denied.contract_call" // §4.3 stage-5b unknown-calldata gate
+	// The exit-8 family (seal/auth/state/rollback). Mapped in codeExit already.
+	CodePolicySealViolation = "policy.seal_violation" // exit 8 — seal failed / anchor missing / unknown fields
+	CodePolicyRollback      = "policy.rollback"       // exit 8 — body.nonce < anchor watermark
+	CodePolicyAdminAuth     = "policy.admin_auth"     // exit 8 — wrong admin passphrase (derived key ≠ anchor)
+	CodePolicyStateError    = "policy.state_error"    // exit 8 — counters unreadable/unlockable/unwritable
 )
 
 // codeExit is the (prefix -> exit) registry, highest-specificity wins. The key
@@ -259,6 +281,14 @@ var retryableDefaults = map[string]bool{
 	"tx.replacement_underpriced": true,
 	"tx.nonce_gap":               true,
 	"state.lock_timeout":         true, // contention; retry
+	// M4 policy denials whose default hint is "retry later" (§4.9):
+	//   - day_limit: the rolling-24h window ages out; the engine returns retry_after
+	//     so an agent SCHEDULES instead of polling.
+	//   - gas_cap: the fee market moves; a later base fee may clear the cap.
+	// Every other policy.denied.* defaults false (retrying without operator action is
+	// pointless) — they inherit the family's false via retryableFor's prefix walk.
+	"policy.denied.day_limit": true,
+	"policy.denied.gas_cap":   true,
 }
 
 // retryableFor returns the default Retryable hint for a code, using the same

@@ -43,10 +43,13 @@ type Reservation struct {
 	ActualGasWei *string        `json:"actual_gas_wei,omitempty"` // set on SettleActual (down-only)
 	TS           string         `json:"ts"`                       // RFC3339Nano (UTC) from the injected clock
 
-	// ── M4 will add (additive only): ──
-	//   Network   string  — the per-network bucket key (mainnet vs an L2)
-	//   PolicyNonce uint64 — the §4.6 rollback tripwire generation
-	//   WindowTS  string  — the rolling-24h window anchor for counter pruning
+	// ── M4 additive fields (no rename, no removal — the contract is frozen) ──
+	Network     string `json:"network,omitempty"`      // per-network bucket key (mainnet vs an L2)
+	PolicyNonce uint64 `json:"policy_nonce,omitempty"` // §4.6 rollback tripwire generation
+
+	// ── transient (never persisted) cross-link fields ──
+	skipReserve bool   // a permit: allowed, gasless, never reserves (no record written)
+	entryID     string // the counter entry id this reservation debits (RBF: the superseded entry)
 }
 
 // reservationsDir is the policy sub-dir holding the durable reservation log.
@@ -62,11 +65,13 @@ func (e *Engine) reservationsPath() string {
 	return filepath.Join(e.reservationsDir(), "reservations.jsonl")
 }
 
-// lockPath is the policy flock sibling. All reservation mutations and reads of
-// the orphan set serialize on this one lock so concurrent daxie processes (or N
-// MCP tool calls) never interleave a read-modify-write. M4 keys the lock
-// per-account (policy-<net>-<addr>.lock, §4.4); M3's single lock is correct and
-// simpler — the stub does no per-account accounting yet.
+// lockPath is the policy RESERVATION-LOG flock sibling. All reservation-log
+// mutations and reads of the orphan set serialize on this one global lock so
+// concurrent daxie processes (or N MCP tool calls) never interleave a
+// read-modify-write of the JSONL log. The COUNTER (rolling-24h window) uses a
+// separate per-NETWORK lock (counter.go withNetworkLock, §4.1) because the daily
+// limit is aggregate across all accounts on a network; the two lock domains are
+// disjoint and never nested in the opposite order.
 func (e *Engine) lockPath() string {
 	return filepath.Join(e.dir, "locks", "policy")
 }
@@ -234,6 +239,7 @@ func (e *Engine) newReservation(c Check) Reservation {
 		MaxGasWei: weiString(c.maxGasWei()),
 		State:     stateReserved,
 		TS:        now.UTC().Format(time.RFC3339Nano),
+		Network:   c.Network,
 	}
 }
 

@@ -62,3 +62,6 @@ func stdinIsTTY() bool {
 // utoa32 formats an int (an account/wallet count or index) as decimal for human
 // tables. It wraps strconv to keep the call sites terse.
 func utoa32(n int) string { return strconv.Itoa(n) }
+
+// utoa64 formats a uint64 (a policy nonce / watermark) as decimal for human tables.
+func utoa64(n uint64) string { return strconv.FormatUint(n, 10) }

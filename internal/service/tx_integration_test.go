@@ -11,9 +11,11 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +57,11 @@ func openSendAnvil(t *testing.T, url string) (*Service, common.Address) {
 		"DAXIE_PASSPHRASE":         "anvil-pass",
 		"DAXIE_PASSPHRASE_CONFIRM": "anvil-pass",
 		"DAXIE_KDF_LIGHT":          "1",
+		// The ADMIN passphrase (M4) is a DISTINCT secret from the keystore passphrase
+		// (§3.7) — distinct env name, distinct value — so the M4 policy tests can set a
+		// sealed policy through the same service without the keystore secret deriving
+		// the seal key.
+		"DAXIE_ADMIN_PASSPHRASE": "anvil-admin-pass",
 	}
 	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
 
@@ -300,3 +307,249 @@ func TestIntegration_CancelReplacesPending(t *testing.T) {
 
 // u64ptrIT is a *uint64 helper local to the integration tests.
 func u64ptrIT(n uint64) *uint64 { return &n }
+
+// ── M4 policy enforcement (anvil end-to-end) ─────────────────────────────────
+//
+// These drive a REAL sealed policy (set under the admin passphrase via the same
+// service) and assert the §4.9 denial codes on real sends: over the per-tx limit
+// (nothing signed), an allowlisted dest (mines), a non-allowlisted dest, and the
+// gas-cap refusal. They are the M4 keystone's end-to-end proof.
+
+const itAdminEnv = "anvil-admin-pass" // matches DAXIE_ADMIN_PASSPHRASE in openSendAnvil
+
+// strPtrIT is a *string helper for the policy set request.
+func strPtrIT(s string) *string { return &s }
+
+// setPolicyIT bootstraps/updates the sealed policy under the admin passphrase
+// (acquired from DAXIE_ADMIN_PASSPHRASE, wired in openSendAnvil). The same engine
+// instance updates its in-memory anchor, so subsequent sends through svc are gated.
+func setPolicyIT(t *testing.T, svc *Service, req PolicySetRequest) {
+	t.Helper()
+	if _, err := svc.PolicySet(context.Background(), domain.LocalCLI(), req, AdminInput{}); err != nil {
+		t.Fatalf("PolicySet: %v", err)
+	}
+}
+
+// allowIT pins an allowlist address under the admin passphrase.
+func allowIT(t *testing.T, svc *Service, addr common.Address) {
+	t.Helper()
+	if _, err := svc.PolicyAllow(context.Background(), domain.LocalCLI(),
+		PolicyAllowRequest{Source: "address", Address: addr.Hex()}, AdminInput{}); err != nil {
+		t.Fatalf("PolicyAllow: %v", err)
+	}
+}
+
+// wantDenied asserts err is a *domain.Error carrying the expected policy.denied.*
+// code at exit 3.
+func wantDenied(t *testing.T, err error, code string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected a policy denial %q, got nil", code)
+	}
+	de := domain.AsError(err)
+	if de.Code != code {
+		t.Fatalf("denial code = %q, want %q (msg %q)", de.Code, code, de.Msg)
+	}
+	if de.Exit != domain.ExitPolicyDenied {
+		t.Errorf("denial exit = %d, want 3 (POLICY_DENIED)", de.Exit)
+	}
+}
+
+// TestIntegration_PolicyTxLimitDenied: a send over max_tx is denied tx_limit and
+// NOTHING is signed/journaled (Reserve denied before sign).
+func TestIntegration_PolicyTxLimitDenied(t *testing.T) {
+	anvil := testchain.Spawn(t)
+	svc, from := openSendAnvil(t, anvil.URL())
+	to := common.HexToAddress("0x00000000000000000000000000000000000000d1")
+
+	// max_tx 0.1 ETH, allowlist OFF (so the ETH limit is what bites, not the gate).
+	setPolicyIT(t, svc, PolicySetRequest{
+		MaxTx:     strPtrIT("0.1eth"),
+		Allowlist: strPtrIT("off"),
+	})
+
+	_, err := svc.SendTx(context.Background(), domain.LocalCLI(),
+		domain.TxRequest{From: "funded", To: to.Hex(), Amount: "1", Yes: true}, nil)
+	wantDenied(t, err, "policy.denied.tx_limit")
+
+	// Nothing was journaled as broadcast/confirmed (the spend was refused before sign).
+	recs, lerr := svc.journal.List(context.Background(), 31337, from)
+	if lerr != nil {
+		t.Fatalf("journal List: %v", lerr)
+	}
+	for _, r := range recs {
+		if r.Status == journal.StatusBroadcast || r.Status == journal.StatusConfirmed {
+			t.Fatalf("a denied send left a %s journal record — nothing should have been signed", r.Status)
+		}
+	}
+}
+
+// TestIntegration_PolicyAllowlist: within limits, an allowlisted dest mines (exit 0,
+// exact balance); a NON-allowlisted dest is denied allowlist.
+func TestIntegration_PolicyAllowlist(t *testing.T) {
+	anvil := testchain.Spawn(t)
+	svc, _ := openSendAnvil(t, anvil.URL())
+	allowed := common.HexToAddress("0x00000000000000000000000000000000000000d2")
+	denied := common.HexToAddress("0x00000000000000000000000000000000000000d3")
+
+	setPolicyIT(t, svc, PolicySetRequest{
+		MaxTx:       strPtrIT("1eth"),
+		MaxDay:      strPtrIT("10eth"),
+		Allowlist:   strPtrIT("on"),
+		IncludeSelf: strPtrIT("on"),
+	})
+	allowIT(t, svc, allowed)
+
+	// Allowlisted dest, within limits ⇒ confirmed, exact 0.5 ETH.
+	res, err := svc.SendTx(context.Background(), domain.LocalCLI(),
+		domain.TxRequest{From: "funded", To: allowed.Hex(), Amount: "0.5", Yes: true,
+			Wait: domain.WaitOpts{Enabled: true}}, nil)
+	if err != nil {
+		t.Fatalf("allowlisted send: %v", err)
+	}
+	if res.Status != domain.TxStatusConfirmed {
+		t.Fatalf("allowlisted send status = %q, want confirmed", res.Status)
+	}
+	cc, _ := svc.chains.ClientFor(context.Background(), ChainRequest{Network: "localanvil"})
+	defer cc.Close()
+	bal, _ := cc.Balance(context.Background(), allowed, nil)
+	if bal.Cmp(big.NewInt(500_000_000_000_000_000)) != 0 {
+		t.Errorf("allowlisted recipient balance = %s, want 5e17", bal)
+	}
+
+	// Non-allowlisted dest ⇒ denied allowlist.
+	_, derr := svc.SendTx(context.Background(), domain.LocalCLI(),
+		domain.TxRequest{From: "funded", To: denied.Hex(), Amount: "0.01", Yes: true}, nil)
+	wantDenied(t, derr, "policy.denied.allowlist")
+}
+
+// TestIntegration_PolicyGasCap: a max_gas_price below the chain base fee refuses the
+// send with gas_cap, and the payload carries current_base_fee.
+func TestIntegration_PolicyGasCap(t *testing.T) {
+	anvil := testchain.Spawn(t)
+	svc, _ := openSendAnvil(t, anvil.URL())
+	to := common.HexToAddress("0x00000000000000000000000000000000000000d4")
+
+	// Allowlist off; an absurdly low gas cap (1 wei) is below any real base fee.
+	setPolicyIT(t, svc, PolicySetRequest{
+		MaxTx:       strPtrIT("1eth"),
+		MaxGasPrice: strPtrIT("1wei"),
+		Allowlist:   strPtrIT("off"),
+	})
+
+	_, err := svc.SendTx(context.Background(), domain.LocalCLI(),
+		domain.TxRequest{From: "funded", To: to.Hex(), Amount: "0.01", Yes: true}, nil)
+	wantDenied(t, err, "policy.denied.gas_cap")
+	de := domain.AsError(err)
+	if de.Data == nil || de.Data["current_base_fee"] == nil {
+		t.Errorf("gas_cap denial payload missing current_base_fee: %+v", de.Data)
+	}
+	if !de.Retryable {
+		t.Errorf("gas_cap denial should be retryable (the fee market moves)")
+	}
+}
+
+// TestIntegration_PolicyVerifyRoundTrip: after a `set`, the seal verifies (exit 0);
+// tamper the policy.json on disk and Verify fails closed (exit 8) — passphrase-free.
+func TestIntegration_PolicyVerifyRoundTrip(t *testing.T) {
+	anvil := testchain.Spawn(t)
+	svc, _ := openSendAnvil(t, anvil.URL())
+
+	setPolicyIT(t, svc, PolicySetRequest{MaxTx: strPtrIT("1eth"), Allowlist: strPtrIT("on")})
+
+	if _, err := svc.PolicyVerify(context.Background(), domain.LocalCLI()); err != nil {
+		t.Fatalf("verify after set: %v (want exit 0)", err)
+	}
+
+	// Tamper the sealed policy.json (flip a byte in the body) ⇒ verify fails closed.
+	pf := filepath.Join(svc.paths.State, "policy.json")
+	b, rerr := os.ReadFile(pf)
+	if rerr != nil {
+		t.Fatalf("read policy.json: %v", rerr)
+	}
+	b[len(b)/2] ^= 0x40
+	if werr := os.WriteFile(pf, b, 0o600); werr != nil {
+		t.Fatalf("write tampered policy.json: %v", werr)
+	}
+	if _, err := svc.PolicyVerify(context.Background(), domain.LocalCLI()); err == nil {
+		t.Fatal("verify of a tampered policy returned nil, want exit 8 (seal_violation)")
+	} else if de := domain.AsError(err); de.Exit != domain.ExitTimeoutPending {
+		t.Errorf("tampered verify exit = %d, want 8 (seal_violation)", de.Exit)
+	}
+}
+
+// counterEntryIT is the minimal on-disk counter shape the RBF test inspects.
+type counterEntryIT struct {
+	AccountNonce *uint64 `json:"account_nonce"`
+	Candidates   []struct {
+		ValueWei string `json:"value_wei"`
+		State    string `json:"state"`
+	} `json:"candidates"`
+}
+type counterFileIT struct {
+	Entries []counterEntryIT `json:"entries"`
+}
+
+// TestIntegration_RBFSupersedesWindow proves the §4.4/§5.5 RBF supersession on a
+// REAL sealed policy + real send pipeline: a speedup folds a candidate into the
+// EXISTING (network,from,account_nonce) counter entry (max-across-candidates), it
+// does NOT create a second entry, and a speedup of a tx that consumed most of the
+// daily budget is NOT falsely denied day_limit (value is not re-counted). This is
+// the end-to-end regression for the dropped Check.AccountNonce.
+func TestIntegration_RBFSupersedesWindow(t *testing.T) {
+	anvil := testchain.SpawnManualMining(t)
+	svc, from := openSendAnvil(t, anvil.URL())
+	to := common.HexToAddress("0x00000000000000000000000000000000000000e7")
+
+	// A TIGHT daily budget: max_day 1.2 ETH. A 1 ETH send consumes most of it; the
+	// pre-fix gate would re-count the original 1 ETH on speedup and deny day_limit.
+	// Allowlist off so the ETH limits govern directly.
+	setPolicyIT(t, svc, PolicySetRequest{
+		MaxTx:     strPtrIT("2eth"),
+		MaxDay:    strPtrIT("1.2eth"),
+		Allowlist: strPtrIT("off"),
+	})
+
+	// Low-fee 1 ETH send: stays pending in the mempool (no auto-mining).
+	r, err := svc.SendTx(context.Background(), domain.LocalCLI(),
+		domain.TxRequest{From: "funded", To: to.Hex(), Amount: "1", MaxFee: "2gwei", PriorityFee: "1gwei", Yes: true}, nil)
+	if err != nil {
+		t.Fatalf("low-fee 1 ETH send: %v", err)
+	}
+
+	// Speed it up. The replacement re-counts ONLY the positive gas delta (value not
+	// re-counted), so it must NOT be denied day_limit even though the original
+	// already consumed ~1 ETH of the 1.2 ETH budget.
+	sres, serr := svc.Speedup(context.Background(), domain.LocalCLI(),
+		domain.SpeedupRequest{Hash: r.Hash}, nil)
+	if serr != nil {
+		t.Fatalf("speedup of a near-budget tx must not be denied (value is not re-counted); got %v", serr)
+	}
+	if sres.Nonce != r.Nonce {
+		t.Errorf("speedup nonce = %d, want %d (same nonce pinned)", sres.Nonce, r.Nonce)
+	}
+
+	// Inspect the on-disk counter: exactly ONE entry for the pinned nonce, with TWO
+	// candidates (the original + the RBF candidate folded in) — NOT two entries.
+	cf := filepath.Join(svc.paths.State, "spend", "localanvil", strings.ToLower(from.Hex())+".json")
+	b, rerr := os.ReadFile(cf)
+	if rerr != nil {
+		t.Fatalf("read counter file %s: %v", cf, rerr)
+	}
+	var doc counterFileIT
+	if jerr := json.Unmarshal(b, &doc); jerr != nil {
+		t.Fatalf("counter file is not valid JSON: %v", jerr)
+	}
+	matching := 0
+	for _, e := range doc.Entries {
+		if e.AccountNonce != nil && *e.AccountNonce == r.Nonce {
+			matching++
+			if len(e.Candidates) < 2 {
+				t.Errorf("RBF entry has %d candidate(s), want ≥2 (the speedup must fold into the entry, not create a new one)", len(e.Candidates))
+			}
+		}
+	}
+	if matching != 1 {
+		t.Fatalf("counter has %d entries for nonce %d, want exactly 1 (RBF supersedes, not adds)", matching, r.Nonce)
+	}
+}

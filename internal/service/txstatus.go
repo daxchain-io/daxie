@@ -409,6 +409,7 @@ func (s *Service) rebroadcast(ctx context.Context, cc chain.Client, rec *journal
 		// reservation; on failure we Release it.
 		worst := bigOrZero(rec.WorstCaseGasWei)
 		value := bigOrZero(rec.ValueWei)
+		recNonce := rec.Nonce
 		reservation, perr := s.policy.Reserve(ctx, policy.Check{
 			Account:    common.HexToAddress(rec.From),
 			Dest:       common.HexToAddress(rec.To),
@@ -416,6 +417,14 @@ func (s *Service) rebroadcast(ctx context.Context, cc chain.Client, rec *journal
 			MaxGasWei:  worst,
 			Kind:       string(rec.Kind),
 			IsRBFDelta: rec.Replaces != nil,
+			// §4.1: the re-reservation MUST key the same per-network counter + per-
+			// network limit overrides as the original send — without Network it would
+			// land in the empty-network bucket (Sepolia spend consuming mainnet
+			// headroom). §4.4/§5.5: carry the account_nonce so an RBF re-reservation
+			// folds into the superseded entry instead of double-counting.
+			Network:      rec.Network,
+			Asset:        rec.Asset.Kind,
+			AccountNonce: &recNonce,
 		})
 		if perr != nil {
 			return false, perr
@@ -499,13 +508,21 @@ func (s *Service) recordResult(rec *journal.Record, network string, hash common.
 	return res
 }
 
-// recordTerminal records a terminal (reverted) transition into the journal.
+// recordTerminal records a terminal (reverted/replaced) transition into the
+// journal. On a REVERTED receipt it also drives policy.SettleActual with
+// reverted=true so the reservation keeps actual gas but RELEASES the native value
+// (§4.4: the EVM did not move it) — otherwise a reverted tx would permanently
+// consume its full value against the rolling-24h daily limit. A `replaced`
+// transition (rcpt==nil) never settles (the replacement carries the spend).
 func (s *Service) recordTerminal(ctx context.Context, chainID uint64, rec *journal.Record, hash common.Hash, status journal.Status, rcpt *types.Receipt) {
 	if rec == nil {
 		return
 	}
 	mut := journal.StateMutation{Status: status, Receipt: journalReceipt(rcpt)}
 	_ = s.journal.SetState(ctx, chainID, rec.ID, mut)
+	if status == journal.StatusReverted && rec.ReservationID != "" {
+		_ = s.policy.SettleActual(ctx, rec.ReservationID, actualGas(rcpt), true)
+	}
 }
 
 // recordConfirmed records the confirmed transition + calls policy.SettleActual
@@ -520,7 +537,7 @@ func (s *Service) recordConfirmed(ctx context.Context, chainID uint64, rec *jour
 	_ = s.journal.SetState(ctx, chainID, rec.ID, mut)
 	if rec.ReservationID != "" {
 		actual := actualGas(rcpt)
-		_ = s.policy.SettleActual(ctx, rec.ReservationID, actual)
+		_ = s.policy.SettleActual(ctx, rec.ReservationID, actual, false)
 	}
 }
 

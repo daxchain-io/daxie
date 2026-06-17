@@ -69,6 +69,7 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newTxCmd(ctx, rs),       // M3
 		newGasCmd(ctx, rs),      // M3
 		newContactsCmd(ctx, rs), // M3
+		newPolicyCmd(ctx, rs),   // M4
 	)
 
 	return root

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/daxchain-io/daxie/internal/policyseal"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -54,7 +55,7 @@ func TestReconcileBroadcastRecordedCommits(t *testing.T) {
 	ctx := context.Background()
 
 	// Process 1: reserve, then "crash" (no commit/release).
-	e1, err := Open(dir, fixedClock())
+	e1, err := Open(dir, fixedClock(), policyseal.Anchor{}, false)
 	if err != nil {
 		t.Fatalf("Open e1: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestReconcileBroadcastRecordedCommits(t *testing.T) {
 
 	// Process 2: service.Open reconciliation. The journal (resolved by service, not
 	// modeled here) showed a recorded broadcast ⇒ CommitOrphan.
-	e2, err := Open(dir, fixedClock())
+	e2, err := Open(dir, fixedClock(), policyseal.Anchor{}, false)
 	if err != nil {
 		t.Fatalf("Open e2: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestReconcileNoBroadcastReleases(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	e1, err := Open(dir, fixedClock())
+	e1, err := Open(dir, fixedClock(), policyseal.Anchor{}, false)
 	if err != nil {
 		t.Fatalf("Open e1: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestReconcileNoBroadcastReleases(t *testing.T) {
 		t.Fatalf("Reserve: %v", err)
 	}
 
-	e2, err := Open(dir, fixedClock())
+	e2, err := Open(dir, fixedClock(), policyseal.Anchor{}, false)
 	if err != nil {
 		t.Fatalf("Open e2: %v", err)
 	}

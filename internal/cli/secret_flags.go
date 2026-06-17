@@ -77,6 +77,41 @@ func (f *keyFlags) bind(cmd *cobra.Command) {
 	fl.StringVar(&f.file, "key-file", "", "read the raw private key (hex) from a file (perms checked)")
 }
 
+// adminPassphraseFlags binds --admin-passphrase-stdin / --admin-passphrase-file
+// (the §3.7/§4.7 ADMIN passphrase that DEFINES policy). It is INDEPENDENT of the
+// keystore passphrase: a distinct channel, distinct env names
+// (DAXIE_ADMIN_PASSPHRASE[_FILE]), and a distinct scrypt salt+params so an agent
+// holding the keystore secret gains nothing toward forging a seal (§3.4). Like
+// every secret channel, the bytes are NEVER a flag value — the flags select a
+// channel only; the core's secret.Acquire reads stdin / the file / the env var.
+// Every mutating `daxie policy` command binds this group.
+type adminPassphraseFlags struct {
+	stdin bool
+	file  string
+}
+
+func (f *adminPassphraseFlags) bind(cmd *cobra.Command) {
+	fl := cmd.Flags()
+	fl.BoolVar(&f.stdin, "admin-passphrase-stdin", false, "read the ADMIN passphrase (defines policy) from stdin")
+	fl.StringVar(&f.file, "admin-passphrase-file", "", "read the ADMIN passphrase from a file (perms checked)")
+}
+
+// newAdminPassphraseFlags binds --new-admin-passphrase-stdin|file (the
+// change-admin-passphrase rotation target, §4.6). It carries no confirm channel:
+// the rotation is staged (--stage prints the new verify key, the operator canaries
+// with `policy pin --verify` before --commit), so a typo is caught by the canary,
+// not a second blind entry.
+type newAdminPassphraseFlags struct {
+	stdin bool
+	file  string
+}
+
+func (f *newAdminPassphraseFlags) bind(cmd *cobra.Command) {
+	fl := cmd.Flags()
+	fl.BoolVar(&f.stdin, "new-admin-passphrase-stdin", false, "read the NEW admin passphrase from stdin (change-admin-passphrase)")
+	fl.StringVar(&f.file, "new-admin-passphrase-file", "", "read the NEW admin passphrase from a file")
+}
+
 // newPassphraseFlags binds --new-passphrase-stdin|file (keystore change-passphrase
 // rotation target, §3.8) plus its confirm channel.
 type newPassphraseFlags struct {

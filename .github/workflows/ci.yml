@@ -253,3 +253,30 @@ jobs:
         run: |
           chmod +x docs/demos/m03.sh
           DAXIE="$PWD/daxie" docs/demos/m03.sh
+
+  demo-m04:
+    name: m04 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m04.sh unmodified
+        # The M4 policy-keystone acceptance demo (§10.1 gate, v0.4.0): policy
+        # bootstrap (first `set` creates the anchor) + show/verify/allow/deny/check;
+        # wrong admin passphrase ⇒ exit 8 admin_auth; a tampered policy.json ⇒ verify
+        # exit 8 seal_violation; reset --force authenticates against the anchor (wrong
+        # pass ⇒ exit 8); pin --print/--verify; the §4.6 Viper carve-out; staged
+        # change-admin-passphrase. LIVE (anvil on PATH via foundry-toolchain): a send
+        # over max_tx ⇒ exit 3 tx_limit (nothing signed), an allowlisted send ⇒ exit 0
+        # (balance moves), a non-allowlisted dest ⇒ exit 3 allowlist, a gas-cap refusal
+        # ⇒ exit 3 gas_cap (current_base_fee in the payload). This is the FIRST demo
+        # that asserts exit-3 policy denials — guardrails now exist.
+        run: |
+          chmod +x docs/demos/m04.sh
+          DAXIE="$PWD/daxie" docs/demos/m04.sh

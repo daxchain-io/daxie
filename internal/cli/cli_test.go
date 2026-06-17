@@ -262,6 +262,28 @@ func TestConfigSetPolicyRejected(t *testing.T) {
 	}
 }
 
+// The §4.6 anchor Viper carve-out regression: NO DAXIE_POLICY_* env var and NO
+// flag can reach the policy anchor. Even with a battery of policy-shaped env vars
+// set, `policy verify` against a pristine (no-anchor) install reports the opt-in
+// state (exit 0) rather than picking up an env-injected verify key, and `config
+// set/get policy.*` are rejected. This is the cli-layer twin of
+// internal/config/anchor_test.go's TestAnchorCarveOut.
+func TestPolicyAnchorCarveOut(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv("DAXIE_POLICY_VERIFY_KEY", "ed25519:ATTACKER")
+	t.Setenv("DAXIE_POLICY_ANCHOR", "/tmp/attacker-anchor.json")
+	t.Setenv("DAXIE_POLICY_MAX_TX", "1000000000000000000000")
+
+	// No on-disk anchor ⇒ opt-in; the env cannot synthesize one ⇒ verify exit 0.
+	if _, _, code := execCLI(t, "policy", "verify"); code != int(domain.ExitOK) {
+		t.Errorf("policy verify with DAXIE_POLICY_* set exit = %d, want 0 (env cannot inject an anchor)", code)
+	}
+	// config still refuses the policy.* subtree (it is never a Viper key).
+	if _, _, code := execCLI(t, "config", "set", "policy.verify_key", "ed25519:x"); code != int(domain.ExitUsage) {
+		t.Errorf("config set policy.verify_key exit = %d, want 2 (USAGE)", code)
+	}
+}
+
 func TestCompletion(t *testing.T) {
 	isolateEnv(t)
 	for _, sh := range []string{"bash", "zsh", "fish"} {
