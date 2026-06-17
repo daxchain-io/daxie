@@ -1,0 +1,29 @@
+# Normalize line endings to LF for all text sources and fixtures.
+#
+# Why this exists: the test suite runs on Windows CI (windows-latest,
+# windows-11-arm). Without these rules, git's autocrlf can check out text
+# fixtures with CRLF on Windows, which breaks byte-for-byte golden comparisons
+# (e.g. internal/mcpserver/testdata/tools.json vs the generated "\n" surface)
+# and any test that string-compares file contents. Pinning eol=lf keeps the
+# working tree identical across darwin/linux/windows.
+#
+# We pin specific extensions rather than `* text=auto eol=lf` to avoid
+# accidentally normalizing binary blobs.
+
+*.go      text eol=lf
+*.json    text eol=lf
+*.golden  text eol=lf
+*.sh      text eol=lf
+*.toml    text eol=lf
+*.md      text eol=lf
+*.txt     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+
+# Everything under any testdata/ directory is an LF text fixture.
+testdata/** text eol=lf
+
+# Binary fixtures (none today, but pin defensively so a future blob is never
+# corrupted by line-ending normalization).
+*.bin      binary
+*.bytecode binary

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -62,6 +63,9 @@ func hasTmpPrefix(name string) bool {
 // intact and no torn data. We trigger the failure by making the target a path
 // whose rename will fail (temp written, but rename into a read-only dir fails).
 func TestWriteAtomicLeavesOriginalOnRenameFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX read-only-dir perms (chmod 0o500) do not block writes on Windows; the read-only mapping is exercised on POSIX")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("running as root: directory perms do not block writes")
 	}

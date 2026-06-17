@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/daxchain-io/daxie/internal/domain"
@@ -55,6 +56,9 @@ func TestAnchorRoundTrip(t *testing.T) {
 // config.read_only (exit 10), so the caller can fall back to emitting the anchor
 // JSON to stdout / --anchor-out (the K8s ConfigMap path).
 func TestAnchorReadOnlyMount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX read-only-dir perms (chmod 0o500) do not block writes on Windows; the config.read_only mapping is exercised on POSIX")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("read-only mount check is meaningless as root")
 	}

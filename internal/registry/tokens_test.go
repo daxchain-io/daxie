@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/daxchain-io/daxie/internal/domain"
@@ -444,6 +445,9 @@ func TestDiscoverySeam(t *testing.T) {
 // state-class read-only sibling of config.read_only (exit 10). It uses a 0500 dir to
 // trigger the MkdirAll/WriteAtomic read-only path the same way contacts does.
 func TestReadOnlyMount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX read-only-dir perms (chmod 0o500) do not block writes on Windows; the read-only mapping is exercised on POSIX")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: permission bits do not block writes")
 	}

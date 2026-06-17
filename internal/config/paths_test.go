@@ -125,20 +125,26 @@ func TestResolvePathsEnvBeatsDefault(t *testing.T) {
 
 func TestConfigOverrideFileOrDir(t *testing.T) {
 	withEnv(t, map[string]string{"HOME": "/home/u"})
+	// Build inputs/expectations with filepath so separators match the platform:
+	// splitConfigOverride returns the FILE verbatim and the dir via filepath.Dir,
+	// which yields backslashes on Windows — a hardcoded "/x" would mismatch there.
+	xDir := filepath.Join(string(filepath.Separator)+"x", "")
 	// A .toml override is the FILE; its parent is the dir.
-	p, err := ResolvePaths(FlagValues{Config: "/x/my.toml"})
+	fileOverride := filepath.Join(xDir, "my.toml")
+	p, err := ResolvePaths(FlagValues{Config: fileOverride})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.ConfigFile != "/x/my.toml" || p.ConfigDir != "/x" {
-		t.Errorf("file override: got file=%q dir=%q, want /x/my.toml and /x", p.ConfigFile, p.ConfigDir)
+	if p.ConfigFile != fileOverride || p.ConfigDir != xDir {
+		t.Errorf("file override: got file=%q dir=%q, want %q and %q", p.ConfigFile, p.ConfigDir, fileOverride, xDir)
 	}
 	// A non-.toml override is the DIR; the file is <dir>/config.toml.
-	p2, err := ResolvePaths(FlagValues{Config: "/x/confdir"})
+	confDir := filepath.Join(xDir, "confdir")
+	p2, err := ResolvePaths(FlagValues{Config: confDir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p2.ConfigDir != "/x/confdir" || p2.ConfigFile != filepath.Join("/x/confdir", "config.toml") {
+	if p2.ConfigDir != confDir || p2.ConfigFile != filepath.Join(confDir, "config.toml") {
 		t.Errorf("dir override: got dir=%q file=%q", p2.ConfigDir, p2.ConfigFile)
 	}
 }
