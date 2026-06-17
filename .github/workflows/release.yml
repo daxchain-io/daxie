@@ -121,6 +121,18 @@ jobs:
             exit 1
           fi
 
+      - name: cosign blob signing config gate
+        # cosign v3 requires a Sigstore bundle for sign-blob. The old detached
+        # .sig + .pem outputs fail only in the real OIDC signing step, so keep a
+        # cheap static gate before the release environment approval.
+        run: |
+          set -euo pipefail
+          if grep -Eq -- '--output-signature|--output-certificate' .goreleaser.yml; then
+            echo "::error::cosign sign-blob must use --bundle, not detached signature/certificate outputs" >&2
+            exit 1
+          fi
+          grep -q -- "--bundle=\${signature}" .goreleaser.yml
+
       - name: Pre-approval asset-name gate
         # Render the goreleaser name templates against the real tag (via a
         # snapshot build that skips the CI-only / signing steps) and assert every
@@ -428,7 +440,7 @@ jobs:
 
   # ── install-smoke-cosign ────────────────────────────────────────────────────
   # Exercises the --verify-signature branch: install.sh downloads
-  # checksums.txt.sig + .pem and runs `cosign verify-blob` against the keyless
+  # checksums.txt.sigstore.json and runs `cosign verify-blob` against the keyless
   # cert chain pinned to this repo's release workflow. A code path the
   # ci-install-script.yml smoke (no cosign on the runner) never covers.
   install-smoke-cosign:

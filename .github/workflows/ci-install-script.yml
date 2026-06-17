@@ -1,9 +1,9 @@
 # Install-script / packaging-config CI (design §9.5). The pre-merge guard for
 # scripts/install.sh and the goreleaser packaging config. Four jobs:
 #
-#   1. goreleaser-check — `goreleaser check` + a deprecation-warning grep whose
-#      allowlist is empty (the config is on dockers_v2). Drift onto a deprecated
-#      stanza fails the build.
+#   1. goreleaser-check — `goreleaser check` + deprecation and cosign-bundle
+#      guards. Drift onto a deprecated stanza or pre-cosign-v3 blob-signing shape
+#      fails the build.
 #   2. shellcheck      — POSIX-sh lint of scripts/install.sh AND the demo scripts,
 #      plus a multi-shell parse (sh/dash/bash) and the --help/unknown-flag
 #      exit-code contract.
@@ -78,6 +78,18 @@ jobs:
             echo "::error::goreleaser reported a deprecation; the allowlist is empty" >&2
             exit 1
           fi
+
+      - name: cosign blob signing config gate
+        # cosign v3 requires a Sigstore bundle for sign-blob. The old detached
+        # .sig + .pem outputs fail only in a real OIDC signing step, so keep a
+        # cheap pre-merge gate here too.
+        run: |
+          set -euo pipefail
+          if grep -Eq -- '--output-signature|--output-certificate' .goreleaser.yml; then
+            echo "::error::cosign sign-blob must use --bundle, not detached signature/certificate outputs" >&2
+            exit 1
+          fi
+          grep -q -- "--bundle=\${signature}" .goreleaser.yml
 
   shellcheck:
     name: shellcheck (install.sh + demos) + parse

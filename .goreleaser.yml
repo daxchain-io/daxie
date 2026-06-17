@@ -87,28 +87,25 @@ snapshot:
 
 # cosign KEYLESS signing of checksums.txt via GitHub Actions OIDC (design §9.3).
 # A short-lived Fulcio cert binds the signature to THIS repo's release workflow at
-# THIS tag ref; the signature + cert land in the Rekor transparency log. No
+# THIS tag ref; the Sigstore bundle lands in the Rekor transparency log. No
 # long-lived key exists. Consumers verify checksums.txt with the exact-workflow
 # identity (the regexp is pinned in scripts/install.sh and docs/install.md, not
 # here, since the signing side doesn't constrain the verifying identity):
 #   cosign verify-blob \
+#     --bundle checksums.txt.sigstore.json \
 #     --certificate-identity-regexp \
 #       '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-#     --certificate daxie_<tag>_checksums.txt.pem \
-#     --signature  daxie_<tag>_checksums.txt.sig \
 #     checksums.txt
 # Skipped locally with `--skip=sign` (no OIDC off-CI).
 signs:
   - cmd: cosign
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
-      - "--yes"
+      - "--bundle=${signature}"
       - "${artifact}"
+      - "--yes"
     artifacts: checksum # keyless cosign over checksums.txt only
 
 # syft SBOM per archive. CI-only: syft is not installed locally, so the local gate

@@ -470,13 +470,11 @@ download_and_verify() {
       fetch "$_checksums_url" "${daxie_workdir}/${_checksums}" ||
         die 4 "failed to download checksums.txt from $_checksums_url"
     fi
-    _sig_url="${_base}/${_checksums}.sig"
-    _cert_url="${_base}/${_checksums}.pem"
-    fetch "$_sig_url" "${daxie_workdir}/${_checksums}.sig" || die 4 "failed to download ${_sig_url}"
-    fetch "$_cert_url" "${daxie_workdir}/${_checksums}.pem" || die 4 "failed to download ${_cert_url}"
+    _bundle_url="${_base}/${_checksums}.sigstore.json"
+    fetch "$_bundle_url" "${daxie_workdir}/${_checksums}.sigstore.json" ||
+      die 4 "failed to download ${_bundle_url}"
     cosign verify-blob \
-      --certificate "${daxie_workdir}/${_checksums}.pem" \
-      --signature "${daxie_workdir}/${_checksums}.sig" \
+      --bundle "${daxie_workdir}/${_checksums}.sigstore.json" \
       --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
       --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
       "${daxie_workdir}/${_checksums}" >/dev/null 2>&1 ||
