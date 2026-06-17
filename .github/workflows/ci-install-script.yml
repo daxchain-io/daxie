@@ -108,7 +108,12 @@ jobs:
           done
 
       - name: --help exits 0
-        run: sh scripts/install.sh --help >/dev/null
+        run: |
+          out="$(sh scripts/install.sh --help)"
+          if printf '%s\n' "$out" | grep -qx 'set -eu'; then
+            echo "::error::install.sh --help leaked implementation line: set -eu" >&2
+            exit 1
+          fi
 
       - name: Unknown flag exits 1
         run: |

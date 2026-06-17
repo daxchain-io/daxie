@@ -138,7 +138,7 @@ usage() {
   # Print the comment block at the top of this file (everything between the
   # shebang and the first non-comment line). Saves maintaining two copies of
   # the help text.
-  sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^[^#]/ { /^[^#]/d; p; }' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # ---- arg parsing -----------------------------------------------------------
