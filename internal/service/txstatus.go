@@ -495,7 +495,7 @@ func (s *Service) recordResult(rec *journal.Record, network string, hash common.
 	if rec != nil {
 		res.From = common.HexToAddress(rec.From)
 		res.To = domain.Dest{Address: common.HexToAddress(rec.To)}
-		res.Asset = wireAsset(rec.Asset)
+		res.Asset = wireAsset(rec.Asset, "") // journal record has no in-memory symbol
 		res.AmountWei = rec.ValueWei
 		res.Nonce = rec.Nonce
 		res.JournalID = rec.ID

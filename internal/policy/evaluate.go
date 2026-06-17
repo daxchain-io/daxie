@@ -364,11 +364,18 @@ func stagePerTx(lim resolvedLimits, req Check, kind Kind) (Violation, bool) {
 // unlimited approval/permit is denied unless Acked AND the policy does not set
 // allow_unlimited:false for that token. allow_unlimited:false is a hard deny
 // regardless of the ceremony.
+//
+// Defense in depth (§4.2): Unlimited is re-derived from the ENCODED amount
+// (req.TokenAmt) against the §4.2 sentinel set, not merely trusted from the
+// caller-supplied req.Unlimited flag. A builder that fails to set Unlimited for a
+// sentinel --amount cannot slip an infinite allowance past this gate — the engine
+// matches the wire value itself. (The builder still sets the flag too, so a typed
+// --unlimited with no amount, e.g. a permit, is also covered.)
 func stageUnlimited(p Policy, req Check, kind Kind) (Violation, bool) {
 	if kind != KindApprove && kind != KindPermit {
 		return Violation{}, false
 	}
-	if !req.Unlimited {
+	if !req.Unlimited && !isUnlimitedAmount(req.TokenAmt) {
 		return Violation{}, false
 	}
 	token := strings.ToLower(req.Token)

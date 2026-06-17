@@ -48,15 +48,27 @@ type BalanceRequest struct {
 	All     bool   `json:"all,omitempty"`     // M5 (flag plumbed; M2 rejects usage.unsupported)
 }
 
-// BalanceResult is the ETH balance of one address on one network. Wei is an exact
-// decimal string and Eth a fixed-decimal string (no float anywhere, §2.5).
+// BalanceResult is the balance of one address on one network. For a native (ETH)
+// balance Wei/Eth/Symbol carry the value; for a single `--token` read the Token
+// block carries the ERC-20 balance (and Wei/Eth stay empty); for `--all` the ETH
+// value is in Wei/Eth and every nonzero registry token rides in Tokens. Wei is an
+// exact decimal string and Eth a fixed-decimal string (no float anywhere, §2.5).
 type BalanceResult struct {
 	Address string `json:"address"`           // EIP-55 hex of the resolved account
 	Network string `json:"network"`           // the network the balance was read on
-	Wei     string `json:"wei"`               // exact decimal string
-	Eth     string `json:"eth"`               // fixed-decimal string (ethunit.FormatAmount)
-	Symbol  string `json:"symbol"`            // native symbol, e.g. "ETH"
+	Wei     string `json:"wei,omitempty"`     // exact decimal string (native; empty on a --token-only read)
+	Eth     string `json:"eth,omitempty"`     // fixed-decimal string (ethunit.FormatAmount)
+	Symbol  string `json:"symbol,omitempty"`  // native symbol, e.g. "ETH"
 	Account string `json:"account,omitempty"` // the request ref, when it named a keystore account
+
+	// Token is the single-token (`balance --token <alias|0x>`) ERC-20 balance: the
+	// resolved asset block + the exact base-unit string + the decimals-aware human
+	// form. Empty for a native or --all read.
+	Token *TokenBalance `json:"token,omitempty"`
+	// Tokens is the `balance --all` per-token listing: every registry token (bundled
+	// majors ∪ file entries) the owner holds a NONZERO balance of, alias-sorted. The
+	// ETH value rides in Wei/Eth alongside. Empty for a single read.
+	Tokens []TokenBalance `json:"tokens,omitempty"`
 }
 
 // ─── network ─────────────────────────────────────────────────────────────────

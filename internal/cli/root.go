@@ -5,8 +5,10 @@
 // this as a failing test). Business logic physically cannot live here.
 //
 // One file per noun; M0 shipped version/completion/config/convert, M1 adds
-// wallet/account/keystore, M2 adds network/rpc/balance, and M3 adds tx (send/
-// status/wait/list + speedup/cancel), gas, and contacts.
+// wallet/account/keystore, M2 adds network/rpc/balance, M3 adds tx (send/
+// status/wait/list + speedup/cancel), gas, and contacts, M4 adds policy, and M5
+// adds token (info/add/rename/list/remove + approve/allowance/revoke) plus the
+// --token transfer + --token/--all balance forms.
 package cli
 
 import (
@@ -70,6 +72,7 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newGasCmd(ctx, rs),      // M3
 		newContactsCmd(ctx, rs), // M3
 		newPolicyCmd(ctx, rs),   // M4
+		newTokenCmd(ctx, rs),    // M5
 	)
 
 	return root

@@ -22,13 +22,31 @@ import (
 // this address (§4.2).
 const permit2Contract = "0x000000000022d473030f116ddee9f6b43ac78ba3"
 
-// uint256Max and uint160Max are the §4.2 "unlimited" sentinels. A permit value at
-// uint256 max (EIP-2612) or a Permit2 amount at uint160 max is unbounded → the
-// unlimited-ack ceremony (§4.3 stage 6).
+// uint256Max, uint160Max and uint96Max are the §4.2 "unlimited" sentinels. A permit
+// value at uint256 max (EIP-2612), a Permit2 amount at uint160 max, or a uint96-max
+// allowance is unbounded → the unlimited-ack ceremony (§4.3 stage 6). The engine
+// re-derives Unlimited from the encoded amount against THIS set (isUnlimitedAmount),
+// so the ceremony does not depend on a caller-supplied flag it cannot trust.
 var (
 	uint256Max = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 	uint160Max = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 160), big.NewInt(1))
+	uint96Max  = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 96), big.NewInt(1))
 )
+
+// isUnlimitedAmount reports whether an approval/permit amount equals any §4.2
+// unlimited sentinel (2^256-1, uint160 max, uint96 max). A nil amount is never
+// unlimited. This is the policy-side twin of erc.IsUnlimitedAmount; the policy
+// package may not import erc (provider→provider, §2.2), so the sentinel set is
+// kept in lock-step with that package — both encode the SAME three values so the
+// calldata builder and the ceremony agree on the exact match set (§4.2 line 1644).
+func isUnlimitedAmount(amount *big.Int) bool {
+	if amount == nil {
+		return false
+	}
+	return amount.Cmp(uint256Max) == 0 ||
+		amount.Cmp(uint160Max) == 0 ||
+		amount.Cmp(uint96Max) == 0
+}
 
 // ClassifyTypedData is the §4.2 typed-data recognizer seam (the frozen service
 // signature). It runs the pure recognizers over (primaryType, domain, message)

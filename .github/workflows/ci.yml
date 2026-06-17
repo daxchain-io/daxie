@@ -196,13 +196,19 @@ jobs:
         run: anvil --version
       - name: go test -tags integration
         # Integration tests use the real chain adapter against a local anvil:
-        # M2's chain-id verification + balance, and M3's full tx pipeline
+        # M2's chain-id verification + balance, M3's full tx pipeline
         # (internal/service/tx_integration_test.go service scenarios +
         # internal/cli/tx_integration_test.go cli-level send→wait→status→list→
-        # speedup/cancel→gas). The `./...` + `-tags integration` already compiles
-        # and runs every //go:build integration file, so the M3 tx tests are
-        # covered without a new job; CGO=1 so -race is available on the one job
-        # that talks to a real EVM (shipped binaries stay CGO_ENABLED=0).
+        # speedup/cancel→gas), and M5's ERC-20 surface against a freshly-deployed test
+        # token (internal/testchain/erc20.go deploy + raw-RPC readers; the
+        # internal/service/token_integration_test.go + internal/cli/token_integration_test.go
+        # scenarios: token add → balance --token == on-chain → tx send --token →
+        # approve/allowance/revoke → balance --all, plus the fail-closed-no-allowlist
+        # deny exit 3 and the policy-dest-is-the-recipient invariant). The `./...` +
+        # `-tags integration` already compiles and runs every //go:build integration
+        # file, so the M3+M5 tests are covered without a new job; CGO=1 so -race is
+        # available on the one job that talks to a real EVM (shipped binaries stay
+        # CGO_ENABLED=0).
         env:
           CGO_ENABLED: "1"
         run: go test -race -tags integration ./...
@@ -280,3 +286,29 @@ jobs:
         run: |
           chmod +x docs/demos/m04.sh
           DAXIE="$PWD/daxie" docs/demos/m04.sh
+
+  demo-m05:
+    name: m05 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m05.sh unmodified
+        # The M5 token acceptance demo (§10.1 gate, v0.5.0): the token registry +
+        # ERC-20 transfers/approvals. DRY: token list shows the bundled majors; an
+        # unregistered alias ⇒ exit 10 ref.not_found (the anti-spoofing wall — NEVER an
+        # on-chain symbol() lookup); balance --token + --all is a usage error; an
+        # --unlimited approve without --yes ⇒ exit 2 (the ceremony). LIVE (anvil on PATH
+        # via foundry-toolchain): deploy a test ERC-20 (via anvil's unlocked dev
+        # account), token add, balance --token == on-chain, tx send --token (recipient
+        # receives it), approve/allowance/revoke, balance --all, and a fail-closed-no-
+        # allowlist token transfer ⇒ exit 3 policy.denied.no_allowlist (nothing signed).
+        run: |
+          chmod +x docs/demos/m05.sh
+          DAXIE="$PWD/daxie" docs/demos/m05.sh

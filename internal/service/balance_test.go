@@ -109,18 +109,34 @@ func TestBalance_ZeroForUnknownAddress(t *testing.T) {
 	}
 }
 
-func TestBalance_TokenRejectedM5(t *testing.T) {
-	svc := openWithProvider(t, &stubProvider{cc: fake.New()})
-	_, err := svc.Balance(context.Background(), domain.LocalCLI(),
-		domain.BalanceRequest{Account: "0x000000000000000000000000000000000000dEaD", Token: "USDC"}, nil)
-	assertCode(t, err, domain.CodeUsageUnsupported)
+// M5: --token now resolves a bundled major (USDC) registry-only and reads its
+// balance — no longer the M2 usage.unsupported rejection.
+func TestBalance_TokenBundledMajor(t *testing.T) {
+	cc := erc20Fake(6, "USDC", big.NewInt(5_000_000), nil) // 5 USDC
+	svc := openWithProvider(t, &stubProvider{cc: cc})
+	res, err := svc.Balance(context.Background(), domain.LocalCLI(),
+		domain.BalanceRequest{Account: "0x000000000000000000000000000000000000dEaD", Token: "USDC", Network: "mainnet"}, nil)
+	if err != nil {
+		t.Fatalf("Balance --token USDC: %v", err)
+	}
+	if res.Token == nil || res.Token.Formatted != "5" {
+		t.Fatalf("USDC balance = %+v, want formatted 5", res.Token)
+	}
 }
 
-func TestBalance_AllRejectedM5(t *testing.T) {
-	svc := openWithProvider(t, &stubProvider{cc: fake.New()})
-	_, err := svc.Balance(context.Background(), domain.LocalCLI(),
-		domain.BalanceRequest{Account: "0x000000000000000000000000000000000000dEaD", All: true}, nil)
-	assertCode(t, err, domain.CodeUsageUnsupported)
+// M5: --all now reads ETH + every registry token (zeros omitted) — no longer the M2
+// usage.unsupported rejection.
+func TestBalance_AllReads(t *testing.T) {
+	cc := erc20Fake(6, "USDC", nil, nil) // every token reads zero ⇒ omitted
+	svc := openWithProvider(t, &stubProvider{cc: cc})
+	res, err := svc.Balance(context.Background(), domain.LocalCLI(),
+		domain.BalanceRequest{Account: "0x000000000000000000000000000000000000dEaD", All: true, Network: "mainnet"}, nil)
+	if err != nil {
+		t.Fatalf("Balance --all: %v", err)
+	}
+	if res.Eth == "" {
+		t.Errorf("--all must carry the ETH value")
+	}
 }
 
 func TestBalance_ENSRejectedM7(t *testing.T) {

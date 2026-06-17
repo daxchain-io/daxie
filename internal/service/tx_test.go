@@ -325,11 +325,15 @@ func TestSendTx_PrefetchFailsBeforeReserve(t *testing.T) {
 	_ = f
 }
 
-func TestSendTx_TokenRejectedM5(t *testing.T) {
+// M5: an UNREGISTERED token alias is ref.not_found — the anti-spoofing wall. A
+// name not in the registry (and not a bundled major) is NEVER resolved by an
+// on-chain symbol() lookup. (The full transfer happy-path lives in tx_token_test.go.)
+func TestSendTx_TokenUnregisteredNotFound(t *testing.T) {
 	from := someAddr(15)
 	svc, _, _ := sendService(t, from)
 	req := txReq(from, someAddr(16), "1")
-	req.Token = "USDC"
+	req.Token = "definitely-not-registered"
+	req.Network = "mainnet"
 	_, err := svc.SendTx(context.Background(), domain.LocalCLI(), req, nil)
-	assertCode(t, err, domain.CodeUsageUnsupported)
+	assertCode(t, err, domain.CodeRefNotFound)
 }

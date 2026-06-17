@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"math/big"
+	"sort"
 
+	"github.com/daxchain-io/daxie/internal/chain"
 	"github.com/daxchain-io/daxie/internal/domain"
 	"github.com/daxchain-io/daxie/internal/ethunit"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // balance.go is the M2 read-only ETH balance use case (cli-spec §balance). It is
@@ -14,24 +18,16 @@ import (
 // the latest block, and returns the value as a wei decimal string + a formatted
 // ETH string (no float, §2.5).
 //
-// In-scope for M2: ETH, a raw 0x address, and the default account. OUT of scope
-// (flag-plumbed but failing clean, NEVER faked): --token/--all (ERC-20 + the local
-// registry, M5) and an ENS account ref (M7). Those return usage.unsupported so an
-// agent gets an honest, branchable error rather than a fabricated zero.
+// In-scope for M2: ETH, a raw 0x address, and the default account. M5 adds
+// --token (a single ERC-20 balance, registry-only alias resolution or a raw 0x) and
+// --all (ETH + every registry token the account holds a nonzero balance of). OUT of
+// scope: an ENS account ref (M7) — it fails clean (usage.unsupported), never faked.
 
-// Balance returns the native (ETH) balance of the request's account on the
-// selected network. The account ref resolves flag>env>meta.json (§7.7) when empty.
+// Balance returns the balance of the request's account on the selected network: the
+// native ETH balance (default), a single ERC-20 balance (--token), or ETH + every
+// nonzero registry token (--all). The account ref resolves flag>env>meta.json (§7.7)
+// when empty.
 func (s *Service) Balance(ctx context.Context, p domain.Principal, req domain.BalanceRequest, emit domain.EventSink) (domain.BalanceResult, error) {
-	// M5 paths: --token / --all. Plumbed but not active in M2 — fail clean.
-	if req.Token != "" {
-		return domain.BalanceResult{}, domain.New(domain.CodeUsageUnsupported,
-			"token balances (--token) land in M5; M2 reads native ETH only")
-	}
-	if req.All {
-		return domain.BalanceResult{}, domain.New(domain.CodeUsageUnsupported,
-			"all-asset balances (--all) land in M5; M2 reads native ETH only")
-	}
-
 	// Resolve the account reference: an explicit ref, else the §7.7 default. An
 	// empty default (no flag/env/meta.json) is a usage error — there is nothing to
 	// read.
@@ -48,7 +44,7 @@ func (s *Service) Balance(ctx context.Context, p domain.Principal, req domain.Ba
 	if err != nil {
 		return domain.BalanceResult{}, err
 	}
-	// M7 path: ENS account ref. Plumbed but not active in M2 — fail clean.
+	// M7 path: ENS account ref. Plumbed but not active — fail clean.
 	if ref.Kind == domain.RefENS {
 		return domain.BalanceResult{}, domain.Newf(domain.CodeUsageUnsupported,
 			"ENS resolution (%s) lands in M7; pass a raw 0x address or a keystore account", ref.Raw)
@@ -70,26 +66,123 @@ func (s *Service) Balance(ctx context.Context, p domain.Principal, req domain.Ba
 	}
 	defer cc.Close()
 
+	network := s.networkName(req.Network)
+	account := ""
+	if ref.Kind != domain.RefAddress {
+		account = ref.Raw
+	}
+
+	switch {
+	case req.Token != "":
+		return s.balanceToken(ctx, cc, network, addr, account, req.Token, emit)
+	case req.All:
+		return s.balanceAll(ctx, cc, network, addr, account, emit)
+	default:
+		return s.balanceETH(ctx, cc, network, addr, account, req.Network, emit)
+	}
+}
+
+// balanceETH reads the native ETH balance (the M2 path, unchanged behavior).
+func (s *Service) balanceETH(ctx context.Context, cc chain.Client, network string, addr common.Address, account, reqNetwork string, emit domain.EventSink) (domain.BalanceResult, error) {
 	wei, err := cc.Balance(ctx, addr, nil) // nil = latest block
 	if err != nil {
 		return domain.BalanceResult{}, err
 	}
-
-	out := domain.BalanceResult{
+	emitResolved(emit, addr.Hex(), "balance of "+addr.Hex())
+	return domain.BalanceResult{
 		Address: addr.Hex(),
-		Network: s.networkName(req.Network),
+		Network: network,
 		Wei:     wei.String(),
 		Eth:     ethunit.FormatAmount(wei, ethunit.Eth),
-		Symbol:  s.nativeSymbol(req.Network),
+		Symbol:  s.nativeSymbol(reqNetwork),
+		Account: account,
+	}, nil
+}
+
+// balanceToken reads a single ERC-20 balance (`balance --token <alias|0x>`). The
+// token is resolved registry-only for an alias (a miss is ref.not_found) or as a raw
+// 0x contract; the balance crosses as an exact base-unit string + a decimals-aware
+// human form (no float). Wei/Eth stay empty — this is a token-only read.
+func (s *Service) balanceToken(ctx context.Context, cc chain.Client, network string, addr common.Address, account, tokenRef string, emit domain.EventSink) (domain.BalanceResult, error) {
+	ra, err := s.resolveAsset(ctx, cc, network, tokenRef)
+	if err != nil {
+		return domain.BalanceResult{}, err
 	}
-	// Echo the keystore ref back only when the request actually named a keystore
-	// account (not a raw 0x literal) — useful context for a human, omitted in JSON
-	// when empty.
-	if ref.Kind != domain.RefAddress {
-		out.Account = ref.Raw
+	bal, err := s.erc.BalanceOf(ctx, cc, ra.contract, addr)
+	if err != nil {
+		return domain.BalanceResult{}, mapRPCErr(err)
 	}
-	emitResolved(emit, addr.Hex(), "balance of "+addr.Hex())
-	return out, nil
+	tb := tokenBalance(ra, bal)
+	emitResolved(emit, addr.Hex(), "token balance of "+addr.Hex())
+	return domain.BalanceResult{
+		Address: addr.Hex(),
+		Network: network,
+		Account: account,
+		Token:   &tb,
+	}, nil
+}
+
+// balanceAll reads ETH + every registry token (bundled majors ∪ file entries) the
+// account holds a NONZERO balance of (`balance --all`). It iterates the Discovery
+// known-assets set (the §10.3 seam: a future indexer enumerates holdings instead),
+// reading each balanceOf; tokens with a zero balance are omitted. The ETH value
+// rides in Wei/Eth alongside.
+func (s *Service) balanceAll(ctx context.Context, cc chain.Client, network string, addr common.Address, account string, emit domain.EventSink) (domain.BalanceResult, error) {
+	wei, err := cc.Balance(ctx, addr, nil)
+	if err != nil {
+		return domain.BalanceResult{}, err
+	}
+	known, err := s.discovery.KnownAssets(ctx, network, addr)
+	if err != nil {
+		return domain.BalanceResult{}, err
+	}
+	var tokens []domain.TokenBalance
+	for _, k := range known {
+		bal, berr := s.erc.BalanceOf(ctx, cc, k.Address, addr)
+		if berr != nil {
+			// A single token's read failure (a self-destructed contract, a non-ERC-20
+			// the user mis-registered) must not sink the whole --all view; skip it.
+			continue
+		}
+		if bal.Sign() == 0 {
+			continue // omit zero balances (the --all view shows what is held)
+		}
+		ra := resolvedAsset{
+			contract: k.Address,
+			decimals: k.Decimals,
+			kind:     orERC20(k.Kind),
+			alias:    k.Alias,
+			symbol:   k.Symbol,
+			bundled:  k.Bundled,
+		}
+		tokens = append(tokens, tokenBalance(ra, bal))
+	}
+	sort.Slice(tokens, func(i, j int) bool { return tokens[i].Alias < tokens[j].Alias })
+	emitResolved(emit, addr.Hex(), "all balances of "+addr.Hex())
+	return domain.BalanceResult{
+		Address: addr.Hex(),
+		Network: network,
+		Wei:     wei.String(),
+		Eth:     ethunit.FormatAmount(wei, ethunit.Eth),
+		Symbol:  s.nativeSymbol(network),
+		Account: account,
+		Tokens:  tokens,
+	}, nil
+}
+
+// tokenBalance projects a resolved asset + a raw base-unit balance into the wire
+// TokenBalance (exact base string + decimals-aware human form; no float).
+func tokenBalance(ra resolvedAsset, bal *big.Int) domain.TokenBalance {
+	return domain.TokenBalance{
+		Alias:     ra.alias,
+		Contract:  ra.contract.Hex(),
+		Symbol:    ra.symbol,
+		Decimals:  int(ra.decimals),
+		Kind:      ra.kind,
+		Base:      bal.String(),
+		Formatted: ethunit.FormatTokenAmount(bal, ra.decimals),
+		Bundled:   ra.bundled,
+	}
 }
 
 // networkName reports the effective network name for the request (the override,

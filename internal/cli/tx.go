@@ -140,13 +140,15 @@ func newTxSendCmd(ctx context.Context, rs *rootState) *cobra.Command {
 	var gf gasFlags
 	var wf waitFlags
 	cmd := &cobra.Command{
-		Use:   "send --to <addr|contact> --amount <value>",
+		Use:   "send --to <addr|contact> --amount <value> [--token <alias|0x>]",
 		Short: "Build, sign, and broadcast a transaction",
-		Long: "Send ETH (M3). --to accepts a raw 0x address or a contact name; --from\n" +
-			"defaults to the configured default account. Gas is estimated unless\n" +
-			"overridden. --wait blocks for confirmations. --dry-run builds + previews\n" +
-			"without signing. --yes is required when non-interactive (no TTY).\n" +
-			"(--token is M5; a name.eth --to is M7 — both fail clean, never faked.)",
+		Long: "Send ETH, or an ERC-20 token with --token (a registry alias or 0x contract\n" +
+			"— aliases resolve registry-only). --to accepts a raw 0x address or a contact\n" +
+			"name; --from defaults to the configured default account. For a token send,\n" +
+			"--amount is in token units and the recipient (not the token contract) is the\n" +
+			"policy destination. Gas is estimated unless overridden. --wait blocks for\n" +
+			"confirmations. --dry-run builds + previews without signing. --yes is required\n" +
+			"when non-interactive. (A name.eth --to is M7 — fails clean, never faked.)",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if to == "" {

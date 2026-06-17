@@ -17,6 +17,7 @@ import (
 
 	"github.com/daxchain-io/daxie/internal/config"
 	"github.com/daxchain-io/daxie/internal/domain"
+	"github.com/daxchain-io/daxie/internal/erc"
 	"github.com/daxchain-io/daxie/internal/journal"
 	"github.com/daxchain-io/daxie/internal/keys"
 	"github.com/daxchain-io/daxie/internal/policy"
@@ -104,6 +105,25 @@ type Service struct {
 	// registry dir (a missing file reads as empty).
 	contacts *registry.Contacts
 
+	// erc is the M5 stateless ERC operations namespace (§2.8): the pure calldata
+	// builders (transfer/approve) + the per-call metadata reads (decimals/symbol/
+	// balanceOf). It carries no state — a single zero value serves every network and
+	// takes the request's chain.Client per call. The token transfer/approval paths
+	// and balance --token/--all use it.
+	erc erc.Ops
+
+	// tokens is the M5 per-network token registry (§7.8): the alias↔contract store +
+	// the bundled-majors merge, on the same registryDir + flock as contacts. Opened
+	// lazily (a missing per-network file reads as the bundled-majors-only set). It is
+	// the concrete store behind the discovery seam.
+	tokens *registry.Tokens
+
+	// discovery is the M5 read seam (§2.10/§10.3) over the token registry: alias→
+	// resolved-token and the known-assets enumeration the --all balance path iterates.
+	// In v1 its concrete type is *tokens (registry+bundled); a future indexer impl
+	// answers the SAME interface from on-chain/index data with zero call-site change.
+	discovery registry.Discovery
+
 	// sleep is the injected ctx-aware scheduling seam (§2.3): the determinism guard
 	// bans the time.After/Sleep family as call expressions in this package, so the
 	// broadcast backoff + the §5.3 poll interval block through this instead. A nil
@@ -111,9 +131,9 @@ type Service struct {
 	// guard stays green. Production injects a real sleeper.
 	sleep func(ctx context.Context, d time.Duration) error
 
-	// Later milestones add: ens *ens.Resolver; erc erc.Ops; tokens/nfts/contracts
-	// *registry.* (token/NFT/contract registries are M5/M6/M10). They are absent
-	// before their milestone by design.
+	// Later milestones add: ens *ens.Resolver (M7); nfts/contracts *registry.*
+	// (NFT/contract registries are M6/M10). They are absent before their milestone
+	// by design. (M5's erc + tokens + discovery are declared above.)
 }
 
 // Open composes the service from resolved options.
@@ -204,6 +224,13 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The M5 token registry: same registryDir + flock as contacts, lazy (a missing
+	// per-network file reads as the bundled-majors-only set). OpenTokens provisions
+	// nothing on disk, so it is safe on a fresh install / read-only config pod.
+	tokenReg, err := registry.OpenTokens(paths.RegistryDir)
+	if err != nil {
+		return nil, err
+	}
 
 	sleep := opts.Sleep
 	if sleep == nil {
@@ -228,7 +255,13 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		nonce:          nmgr,
 		policy:         peng,
 		contacts:       cbook,
-		sleep:          sleep,
+		erc:            erc.Ops{},
+		tokens:         tokenReg,
+		// The §2.10/§10.3 Discovery seam: in v1 the concrete impl is the registry-
+		// backed *Tokens (registry + bundled majors). Service holds the interface so a
+		// future indexer impl swaps in here with zero call-site change.
+		discovery: tokenReg,
+		sleep:     sleep,
 		// The §2.8 chain provider. It is stateless (dial per call) so Open dials
 		// NOTHING here — it only captures the merged config + the per-process
 		// defaults; the first dial happens when a chain-touching use case runs. This

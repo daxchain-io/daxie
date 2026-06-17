@@ -272,6 +272,54 @@ func TestEvaluateUnlimitedCeremony(t *testing.T) {
 	}
 }
 
+// TestEvaluateUnlimitedDerivedFromAmount is the defense-in-depth guard (§4.2): the
+// engine re-derives Unlimited from the ENCODED amount (Check.TokenAmt) against the
+// sentinel set, so a Check whose builder forgot to set Unlimited but whose TokenAmt
+// is a sentinel STILL takes the unlimited-ack ceremony. This closes the bypass at
+// the gate itself, independent of the caller-supplied flag. Every §4.2 sentinel
+// (2^256-1, uint160 max, uint96 max) is exercised.
+func TestEvaluateUnlimitedDerivedFromAmount(t *testing.T) {
+	base := func() Policy {
+		p := policyWithLimits("1000000000000000000", "0", "0", false)
+		p.Rules.Default.MaxDayWei = nil
+		p.Rules.Default.MaxGasPriceWei = nil
+		p.TokensNoAllowlistOK = true // isolate the unlimited gate from the no-allowlist rule
+		return p
+	}
+	token := lowerHex(other)
+
+	for name, sentinel := range map[string]*big.Int{
+		"uint256Max": uint256Max,
+		"uint160Max": uint160Max,
+		"uint96Max":  uint96Max,
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Unlimited flag deliberately FALSE; only TokenAmt carries the sentinel.
+			unacked := Check{
+				Account: selfAcc, Dest: dest, KindEnum: KindApprove, Token: token,
+				Unlimited: false, TokenAmt: new(big.Int).Set(sentinel), Network: "mainnet",
+			}
+			if dec := Evaluate(base(), unacked, big.NewInt(0), now0()); dec.Allowed || dec.Code != codeUnlimitedUnacked {
+				t.Fatalf("a sentinel TokenAmt with Unlimited=false must be denied unlimited_unacked; got %+v", dec)
+			}
+			acked := unacked
+			acked.Acked = true
+			if dec := Evaluate(base(), acked, big.NewInt(0), now0()); !dec.Allowed {
+				t.Fatalf("an acked sentinel-amount approval must be allowed; got %+v", dec)
+			}
+		})
+	}
+
+	// A bounded (non-sentinel) amount with Unlimited=false is NOT gated.
+	bounded := Check{
+		Account: selfAcc, Dest: dest, KindEnum: KindApprove, Token: token,
+		Unlimited: false, TokenAmt: big.NewInt(1_000_000), Network: "mainnet",
+	}
+	if dec := Evaluate(base(), bounded, big.NewInt(0), now0()); !dec.Allowed {
+		t.Fatalf("a bounded approval must not trip the unlimited ceremony; got %+v", dec)
+	}
+}
+
 // 10. Per-network override: an explicit-null per-network max_tx means "no limit",
 // so a send that would exceed the default passes on that network.
 func TestEvaluatePerNetworkNullOverride(t *testing.T) {

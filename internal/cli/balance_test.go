@@ -10,12 +10,14 @@ import (
 
 // The balance command's chain-touching path needs a live endpoint (covered by the
 // service integration tests against anvil). These CLI tests exercise the paths
-// that fail BEFORE any dial — the M5/M7 not-yet-active flags and the missing-account
-// case — so they assert the command wiring + §5.7 exit codes without a network.
+// that fail BEFORE any dial — the mutually-exclusive flags, the M7-not-yet ENS arg,
+// and the missing-account case — so they assert the command wiring + §5.7 exit codes
+// without a network.
 
-func TestBalanceTokenRejectedExit2(t *testing.T) {
+// M5: --token and --all are mutually exclusive — caught at the cli BEFORE any dial.
+func TestBalanceTokenAndAllExit2(t *testing.T) {
 	isolateEnv(t)
-	_, stderr, code := execCLI(t, "balance", "0x000000000000000000000000000000000000dEaD", "--token", "USDC", "--json")
+	_, stderr, code := execCLI(t, "balance", "0x000000000000000000000000000000000000dEaD", "--token", "USDC", "--all", "--json")
 	if code != int(domain.ExitUsage) {
 		t.Fatalf("exit = %d, want %d (USAGE)", code, domain.ExitUsage)
 	}
@@ -27,16 +29,8 @@ func TestBalanceTokenRejectedExit2(t *testing.T) {
 	if err := json.Unmarshal([]byte(stderr), &env); err != nil {
 		t.Fatalf("error envelope not JSON: %v (%q)", err, stderr)
 	}
-	if env.Error.Code != domain.CodeUsageUnsupported {
-		t.Errorf("code = %q, want %q", env.Error.Code, domain.CodeUsageUnsupported)
-	}
-}
-
-func TestBalanceAllRejectedExit2(t *testing.T) {
-	isolateEnv(t)
-	_, _, code := execCLI(t, "balance", "0x000000000000000000000000000000000000dEaD", "--all")
-	if code != int(domain.ExitUsage) {
-		t.Fatalf("exit = %d, want %d (USAGE)", code, domain.ExitUsage)
+	if !strings.HasPrefix(env.Error.Code, "usage.") {
+		t.Errorf("code = %q, want usage.*", env.Error.Code)
 	}
 }
 

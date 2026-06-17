@@ -53,8 +53,30 @@ type Intent struct {
 	value *big.Int
 	data  []byte // calldata (empty for plain ETH)
 
+	// policyDest is the policy allowlist SUBJECT: the decoded recipient (an ERC-20
+	// transfer) or the spender (an approval). For a plain ETH send it equals `to`.
+	// For a token op it is NEVER the token contract (`to`) — the contract is identity-
+	// checked, the human flow of value goes to the recipient/spender (§4.2/§5.1). It
+	// is the zero address for paths that never set it (then authorize falls back to
+	// `to`, the correct value for ETH).
+	policyDest common.Address
+	// policyKind selects the Check kind for a non-ETH op: policyKindApprove routes a
+	// token approval/revoke through KindApprove (the spend-equivalent gates). The
+	// zero value (policyKindDefault) leaves the kind to the journal.Kind mapping.
+	policyKind policyKind
+	// tokenAmt / unlimited / acked carry the §4.2 token-op fields into the Check:
+	// tokenAmt is the raw base-unit amount (display only — SpendWei stays 0 for token
+	// ops, no price oracle); unlimited is the 2^256-1 sentinel match; acked is the
+	// --unlimited --yes ceremony bit. All zero for a plain ETH send.
+	tokenAmt  *big.Int
+	unlimited bool
+	acked     bool
+
 	kind  journal.Kind
 	asset journal.Asset
+	// assetSymbol is the token's display symbol carried into the result Asset block
+	// (the journal.Asset has no symbol field). Empty for ETH.
+	assetSymbol string
 
 	gas Quote // the built gas quote (limit + fees) — filled by buildGas
 
@@ -63,6 +85,68 @@ type Intent struct {
 
 	source   string // "cli" | "mcp"
 	unlocker domain.Unlocker
+}
+
+// policyKind selects how an Intent maps to the policy.Check kind. policyKindDefault
+// leaves it to the journal.Kind string mapping (ETH/token transfers → KindTransfer);
+// policyKindApprove forces KindApprove (the approval spend-equivalent gates).
+type policyKind int
+
+const (
+	policyKindDefault policyKind = iota
+	policyKindApprove
+)
+
+// checkDest returns the policy allowlist subject for this Intent: the explicit
+// policyDest (a token transfer's recipient / an approval's spender) when set, else
+// `to` (a plain ETH send's recipient). NEVER the token contract for a token op
+// (the token paths set policyDest to the decoded recipient/spender, §4.2/§5.1).
+func (in *Intent) checkDest() common.Address {
+	if in.policyDest != (common.Address{}) {
+		return in.policyDest
+	}
+	return in.to
+}
+
+// checkAsset returns the policy Asset tag: "eth" for a plain ETH send (no
+// data/approval), else the lowercase token contract address. The stage-3c
+// fail-closed rule + isTokenOrApproval read this (a non-"eth" Asset marks a
+// token/approval op), so a token transfer/approval fires the fail-closed-no-
+// allowlist gate (§4.3).
+func (in *Intent) checkAsset() string {
+	if in.isTokenOp() {
+		return strings.ToLower(in.to.Hex())
+	}
+	return "eth"
+}
+
+// tokenTag returns the policy Token field: the lowercase token contract for a
+// token/approval op (the per-token rule key the unlimited hard-deny + stage-3c
+// read), else "" (a plain ETH send carries no token tag). It is the lowercase
+// contract for the SAME reasons checkAsset is — both are set so isTokenOrApproval
+// fires on either field.
+func (in *Intent) tokenTag() string {
+	if in.isTokenOp() {
+		return strings.ToLower(in.to.Hex())
+	}
+	return ""
+}
+
+// isTokenOp reports whether this Intent is a token transfer or an approval (not a
+// plain ETH send). A token transfer carries non-empty calldata to the token
+// contract; an approval is policyKindApprove. A plain ETH send has neither.
+func (in *Intent) isTokenOp() bool {
+	return in.policyKind == policyKindApprove || (len(in.data) > 0 && in.kind == journal.KindERC20Transfer)
+}
+
+// policyCheckKind maps the Intent's policyKind to the policy.Check Kind string the
+// engine's effectiveKind() reads. policyKindApprove → "approve" (→ KindApprove);
+// default → the journal.Kind string (ETH/erc20 transfers → KindTransfer).
+func (in *Intent) policyCheckKind() string {
+	if in.policyKind == policyKindApprove {
+		return "approve"
+	}
+	return string(in.kind)
 }
 
 // authorized is what the kernel returns (§2.7): a signed, journaled,
@@ -107,12 +191,6 @@ const (
 // bounded locked critical section via authorize, broadcasts, settles/aborts, and
 // optionally waits.
 func (s *Service) SendTx(ctx context.Context, p domain.Principal, req domain.TxRequest, sink domain.EventSink) (domain.TxResult, error) {
-	// M5: token transfers. Plumbed but not active in M3 — fail clean, never faked.
-	if req.Token != "" {
-		return domain.TxResult{}, domain.New(domain.CodeUsageUnsupported,
-			"token transfers (--token) land in M5; M3 sends native ETH only")
-	}
-
 	in, err := s.resolveIntent(ctx, p, req, sink)
 	if err != nil {
 		return domain.TxResult{}, err
@@ -296,19 +374,36 @@ func (s *Service) authorize(ctx context.Context, p domain.Principal, in Intent, 
 		worst = big.NewInt(0)
 	}
 	check := policy.Check{
-		Account:      in.from,
-		Dest:         in.to,
+		Account: in.from,
+		// §4.2/§5.1: the policy allowlist subject is the DECODED recipient (an ERC-20
+		// transfer) / SPENDER (an approval) — NEVER the token contract. checkDest
+		// returns in.policyDest when set, else in.to (the plain-ETH recipient).
+		Dest: in.checkDest(),
+		// SpendWei is the ETH-denominated native value ONLY (§4.2). A token op carries
+		// no ETH value (in.value == 0) and no price oracle exists, so a token amount is
+		// NEVER written here — it rides in TokenAmt (display) instead.
 		SpendWei:     in.value,
 		MaxGasWei:    worst,
 		MaxFeePerGas: perGasPrice(in.gas),
-		Kind:         string(in.kind),
-		IsRBFDelta:   in.replaces != nil,
-		// M4 additive wiring (§4.1/§4.3): the per-network spend bucket + rule key,
-		// and the ETH asset tag. Without Network the rolling-24h counter file path
-		// and the per-network limit overrides cannot key correctly. Sepolia spends
-		// never consume mainnet headroom.
+		// Kind routes the §4.3 gates: a token approval/revoke → "approve" (KindApprove,
+		// the spend-equivalent gates); ETH/token transfers → KindTransfer.
+		Kind:       in.policyCheckKind(),
+		IsRBFDelta: in.replaces != nil,
+		// M4 additive wiring (§4.1/§4.3): the per-network spend bucket + rule key.
+		// Without Network the rolling-24h counter file path and the per-network limit
+		// overrides cannot key correctly. Sepolia spends never consume mainnet headroom.
 		Network: in.network,
-		Asset:   "eth",
+		// Token/Asset carry the lowercase token contract for a token/approval op (else
+		// "eth"). The stage-3c fail-closed rule + isTokenOrApproval read these — set
+		// BOTH so a token transfer/approval fires the fail-closed-no-allowlist gate.
+		Token:    in.tokenTag(),
+		Asset:    in.checkAsset(),
+		TokenAmt: in.tokenAmt, // raw base units, display only (§4.2)
+		// §4.2 unlimited ceremony: Unlimited is the 2^256-1 sentinel match; Acked is the
+		// --unlimited --yes acknowledgement. The engine's stage-6 unlimited gate reads
+		// both — an unacked unlimited approval is denied unlimited_unacked (exit 3).
+		Unlimited: in.unlimited,
+		Acked:     in.acked,
 		// §4.4/§5.5 RBF supersession: EVERY send carries its pinned account_nonce so
 		// the counter entry is keyed by (network, from, account_nonce). The original
 		// send must store it so a later speedup/cancel (IsRBFDelta) can fold its
@@ -555,12 +650,6 @@ func (s *Service) resolveIntent(ctx context.Context, p domain.Principal, req dom
 	}
 	emitResolved(sink, dest.Address.Hex(), "to "+destLabel(dest))
 
-	// ── value (ETH) ──
-	value, err := parseEthAmount(req.Amount)
-	if err != nil {
-		return Intent{}, err
-	}
-
 	// ── dial + chain id ──
 	cc, err := s.chains.ClientFor(ctx, ChainRequest{Network: req.Network, RPC: req.RPC})
 	if err != nil {
@@ -572,15 +661,69 @@ func (s *Service) resolveIntent(ctx context.Context, p domain.Principal, req dom
 		return Intent{}, mapRPCErr(err)
 	}
 
-	// Source attribution from the Principal (§5.6 source ∈ cli | mcp | mcp:<principal>).
-	source := "cli"
-	if p.Label == "mcp" {
-		source = "mcp"
+	network := s.networkName(req.Network)
+	source := sourceOf(p)
+
+	// ── token transfer (--token): an ERC-20 send (§5.1) ──
+	if strings.TrimSpace(req.Token) != "" {
+		// Resolve the asset (registry-only alias resolution; a raw 0x reads decimals
+		// on-chain for display). A miss is the anti-spoofing ref.not_found.
+		ra, aerr := s.resolveAsset(ctx, cc, network, req.Token)
+		if aerr != nil {
+			cc.Close()
+			return Intent{}, aerr
+		}
+		// The --amount is in TOKEN base units (no float; decimals applied via ethunit).
+		amount, perr := ethunit.ParseTokenAmount(strings.TrimSpace(req.Amount), ra.decimals)
+		if perr != nil {
+			cc.Close()
+			return Intent{}, domain.Wrap(domain.CodeUsage+".bad_amount", "invalid --amount "+req.Amount, perr)
+		}
+		// Build the ERC-20 transfer calldata: selector 0xa9059cbb || abi(recipient,
+		// amount). The recipient is the DECODED dest — the policy subject — NOT the
+		// token contract (§4.2/§5.1).
+		data := s.erc.TransferCalldata(dest.Address, amount)
+		decInt := int(ra.decimals)
+		amtStr := amount.String()
+		contractHex := strings.ToLower(ra.contract.Hex())
+		return Intent{
+			chainID: chainID,
+			network: network,
+			rpc:     req.RPC,
+			cc:      cc,
+			from:    from,
+			ref:     fromRef,
+			dest:    dest,
+			to:      ra.contract,   // the tx goes TO the token contract
+			value:   big.NewInt(0), // a token transfer carries no ETH
+			data:    data,
+			// THE policy subject = the decoded recipient (NOT the token contract).
+			policyDest: dest.Address,
+			tokenAmt:   new(big.Int).Set(amount),
+			kind:       journal.KindERC20Transfer,
+			asset: journal.Asset{
+				Kind:     "erc20",
+				Contract: &contractHex,
+				Alias:    ra.alias,
+				Decimals: &decInt,
+				Amount:   &amtStr,
+			},
+			assetSymbol: ra.symbol,
+			nonce:       req.Nonce,
+			source:      source,
+		}, nil
+	}
+
+	// ── plain ETH send ──
+	value, err := parseEthAmount(req.Amount)
+	if err != nil {
+		cc.Close()
+		return Intent{}, err
 	}
 
 	return Intent{
 		chainID: chainID,
-		network: s.networkName(req.Network),
+		network: network,
 		rpc:     req.RPC,
 		cc:      cc,
 		from:    from,
@@ -635,15 +778,23 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 		worst = big.NewInt(0)
 	}
 	dec, err := s.policy.Evaluate(ctx, policy.Check{
-		Account:      in.from,
-		Dest:         in.to,
+		Account: in.from,
+		// Mirror authorize EXACTLY (§5.1: --dry-run runs the full verdict): the policy
+		// dest is the decoded recipient/spender (NOT the token contract), the asset is
+		// the token contract for a token op, and the kind routes the spend-equivalent
+		// gates for an approval.
+		Dest:         in.checkDest(),
 		SpendWei:     in.value,
 		MaxGasWei:    worst,
 		MaxFeePerGas: perGasPrice(in.gas),
-		Kind:         string(in.kind),
+		Kind:         in.policyCheckKind(),
 		IsRBFDelta:   in.replaces != nil,
 		Network:      in.network, // M4: per-network bucket/rule key (§4.1)
-		Asset:        "eth",
+		Token:        in.tokenTag(),
+		Asset:        in.checkAsset(),
+		TokenAmt:     in.tokenAmt,
+		Unlimited:    in.unlimited,
+		Acked:        in.acked,
 		// §4.4/§5.5: carry the intended account_nonce so an RBF dry-run evaluates
 		// against the superseded entry (in.nonce is the pinned nonce on the RBF path,
 		// nil for a normal send — harmless then).
@@ -670,7 +821,7 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 		Network:   in.network,
 		From:      in.from,
 		To:        in.dest,
-		Asset:     wireAsset(in.asset),
+		Asset:     wireAsset(in.asset, in.assetSymbol),
 		AmountWei: in.value.String(),
 		Gas:       in.gas.result(),
 		Status:    domain.TxStatusPending,
@@ -686,7 +837,7 @@ func (s *Service) txResult(in *Intent, a authorized, st domain.TxStatus) domain.
 		Network:   in.network,
 		From:      in.from,
 		To:        in.dest,
-		Asset:     wireAsset(in.asset),
+		Asset:     wireAsset(in.asset, in.assetSymbol),
 		AmountWei: in.value.String(),
 		Nonce:     a.nonce,
 		Gas:       in.gas.result(),
@@ -784,9 +935,12 @@ func feesRecord(q Quote) journal.Fees {
 	return f
 }
 
-// wireAsset maps a journal.Asset into the wire domain.Asset.
-func wireAsset(a journal.Asset) domain.Asset {
-	out := domain.Asset{Kind: a.Kind}
+// wireAsset maps a journal.Asset (+ an in-memory display symbol, "" when none) into
+// the wire domain.Asset. The journal record has no symbol field, so the live send
+// path passes the resolved symbol; the status/list path (reading a journal record)
+// passes "".
+func wireAsset(a journal.Asset, symbol string) domain.Asset {
+	out := domain.Asset{Kind: a.Kind, Symbol: symbol}
 	if a.Contract != nil {
 		out.Contract = *a.Contract
 	}
