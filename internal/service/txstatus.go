@@ -543,21 +543,31 @@ func (s *Service) recordConfirmed(ctx context.Context, chainID uint64, rec *jour
 
 // ── destination resolver (shared by SendTx/RBF) ──────────────────────────────
 
-// resolveDest maps a --to value to a Dest (§5.1): a 0x literal → itself; else a
-// contact name → its address (the human name echoed back); else ENS (M7, fails
-// clean). An empty --to is a usage error (no recipient).
-func (s *Service) resolveDest(ctx context.Context, to string) (domain.Dest, error) {
+// resolveDest maps a --to value to a Dest (§5.1): a 0x literal → itself
+// (Via="literal"); an ENS name → fresh per-invocation resolution (Via="ens",
+// ENSName set — M7); else a contact name → its snapshot address (Via="contact", the
+// human name echoed back). The Via provenance is what the §4.3 stage-4 pin-drift
+// producer (tx.go) reads to decide whether a fresh-resolution drift check applies.
+// An empty --to is a usage error (no recipient).
+//
+// The ENS resolution here is the FRESH, per-invocation lookup that runs in the
+// prefetch stage BEFORE the spend-state lock (§2.7/§4.3 — the policy engine does no
+// network I/O inside the lock); its result is the value the EvResolved echo carries
+// before signing (§4.8 "always echo the resolved address").
+func (s *Service) resolveDest(ctx context.Context, cr ChainRequest, to string) (domain.Dest, error) {
 	if to == "" {
-		return domain.Dest{}, domain.New(domain.CodeUsage+".no_recipient", "--to is required (address or contact name)")
+		return domain.Dest{}, domain.New(domain.CodeUsage+".no_recipient", "--to is required (address, ENS name, or contact name)")
 	}
 	ref, err := domain.ParseAccountRef(to)
 	if err == nil && ref.Kind == domain.RefAddress {
-		return domain.Dest{Address: ref.Addr}, nil
+		return domain.Dest{Address: ref.Addr, Via: "literal"}, nil
 	}
-	// ENS: M7. Fail clean (never faked).
+	// ENS: resolve fresh against the CONNECTED network's registry (M7 / §2.8 — the
+	// send's own network, not the process default). The resolved address is the
+	// destination; the name is carried as provenance for the echo + the stage-4 pin
+	// check.
 	if err == nil && ref.Kind == domain.RefENS {
-		return domain.Dest{}, domain.Newf(domain.CodeUsageUnsupported,
-			"ENS resolution (%s) lands in M7; pass a 0x address or a contact name", to)
+		return s.resolveENS(ctx, cr, to)
 	}
 	// Contact name (case-insensitive). A miss falls through to ref.not_found.
 	addr, found, cerr := s.contacts.Resolve(ctx, to)
@@ -565,10 +575,10 @@ func (s *Service) resolveDest(ctx context.Context, to string) (domain.Dest, erro
 		return domain.Dest{}, cerr
 	}
 	if found {
-		return domain.Dest{Address: addr, Name: to}, nil
+		return domain.Dest{Address: addr, Name: to, Via: "contact"}, nil
 	}
 	return domain.Dest{}, domain.Newf(domain.CodeRefNotFound,
-		"--to %q is not a 0x address or a known contact (add it with `daxie contacts add`)", to)
+		"--to %q is not a 0x address, an ENS name, or a known contact (add it with `daxie contacts add`)", to)
 }
 
 // confirmTarget resolves the confirmation count: the explicit override >

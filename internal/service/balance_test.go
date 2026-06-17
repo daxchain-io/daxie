@@ -9,6 +9,7 @@ import (
 	"github.com/daxchain-io/daxie/internal/chain/fake"
 	"github.com/daxchain-io/daxie/internal/config"
 	"github.com/daxchain-io/daxie/internal/domain"
+	"github.com/daxchain-io/daxie/internal/ens"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -139,11 +140,32 @@ func TestBalance_AllReads(t *testing.T) {
 	}
 }
 
-func TestBalance_ENSRejectedM7(t *testing.T) {
-	svc := openWithProvider(t, &stubProvider{cc: fake.New()})
+// M7 ACTIVATES read-only ENS: `balance vitalik.eth` resolves the name against the
+// connected network (§3.2: ENS is legal wherever a read-only address is). A name with
+// no on-chain record resolves to nothing ⇒ ref.not_found (exit 10) — NOT the M6
+// usage.unsupported, and NEVER an all-zero address read as a real account.
+func TestBalance_ENSUnresolvedIsRefNotFound(t *testing.T) {
+	svc := openWithProvider(t, &stubProvider{cc: ensFake(nil, nil)})
 	_, err := svc.Balance(context.Background(), domain.LocalCLI(),
 		domain.BalanceRequest{Account: "vitalik.eth"}, nil)
-	assertCode(t, err, domain.CodeUsageUnsupported)
+	assertCode(t, err, domain.CodeRefNotFound)
+}
+
+// A registered ENS name reads the balance of the RESOLVED address.
+func TestBalance_ENSResolvedReadsResolvedAddress(t *testing.T) {
+	resolved := common.HexToAddress("0x00000000000000000000000000000000000000ab")
+	node := ens.Namehash("vitalik.eth")
+	cc := ensFake(map[[32]byte]common.Address{node: resolved}, nil)
+	cc.Balances = map[common.Address]*big.Int{resolved: big.NewInt(7)}
+	svc := openWithProvider(t, &stubProvider{cc: cc})
+	res, err := svc.Balance(context.Background(), domain.LocalCLI(),
+		domain.BalanceRequest{Account: "vitalik.eth"}, nil)
+	if err != nil {
+		t.Fatalf("Balance vitalik.eth: %v", err)
+	}
+	if res.Address != resolved.Hex() {
+		t.Fatalf("balance address = %s, want the resolved %s", res.Address, resolved.Hex())
+	}
 }
 
 func TestBalance_NoAccountNoDefault(t *testing.T) {

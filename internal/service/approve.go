@@ -101,7 +101,7 @@ func (s *Service) resolveApproveIntent(ctx context.Context, p domain.Principal, 
 	}
 
 	// ── spender: the POLICY subject (0x literal or contact name) ──
-	spenderDest, err := s.resolveDest(ctx, req.Spender)
+	spenderDest, err := s.resolveDest(ctx, ChainRequest{Network: req.Network, RPC: req.RPC}, req.Spender)
 	if err != nil {
 		return Intent{}, nil, err
 	}

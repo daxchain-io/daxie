@@ -114,9 +114,24 @@ const (
 // Dest is the resolved destination echo on a TxResult: the address plus the
 // human ref it resolved from (a contact name in M3, an ENS name in M7), so the
 // caller can confirm "this is who I think it is" without re-resolving.
+//
+// M7 adds provenance (Via/ENSName, additive + omitempty so an M6 JSON envelope is
+// byte-identical when they are empty). The service's §4.3 stage-4 pin-drift
+// producer reads Via to decide whether a fresh-resolution drift check applies, and
+// the EvResolved echo + the result block surface ENSName so an agent/human sees the
+// name AND the address it actually resolved to before signing (§4.8).
 type Dest struct {
 	Address common.Address `json:"address"`
 	Name    string         `json:"name,omitempty"` // contact/ENS name it resolved from, if any
+	// Via records how the destination was supplied: "ens" (an ENS name, resolved
+	// fresh per-invocation), "contact" (a registry contact, snapshot), or "literal"
+	// (a raw 0x address — no drift check applies). Empty (omitted) for paths that
+	// never set it, which the stage-4 producer treats as a literal address.
+	Via string `json:"via,omitempty"`
+	// ENSName is the exact ENS name the destination came from ("vitalik.eth"),
+	// non-empty only when Via=="ens". The pin-drift Check carries it for the
+	// ens_drift/ens_unresolved messaging; the echo shows it alongside the address.
+	ENSName string `json:"ens_name,omitempty"`
 }
 
 // Asset is the wire asset block on a TxResult. ETH in M3; the token fields
@@ -272,10 +287,15 @@ type GasQuotesResult struct {
 // ─── contacts (§7.8) ─────────────────────────────────────────────────────────
 
 // ContactAddRequest adds a name→address entry to the network-agnostic contacts
-// registry (§7.8). The name follows the §3.1 grammar; a duplicate is usage.*.
+// registry (§7.8). The name follows the §3.1 grammar; a duplicate is usage.*. The
+// address is a raw 0x OR an ENS name (M7) — an ENS name is resolved NOW against
+// Network/RPC and the resolved 0x is stored (a snapshot; §2.8 per-call endpoint).
+// Network/RPC are read only on the ENS path.
 type ContactAddRequest struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
+	Network string `json:"network,omitempty"`
+	RPC     string `json:"rpc,omitempty"`
 }
 
 // ContactShowRequest / ContactRemoveRequest select one contact by name

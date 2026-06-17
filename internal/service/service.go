@@ -17,6 +17,7 @@ import (
 
 	"github.com/daxchain-io/daxie/internal/config"
 	"github.com/daxchain-io/daxie/internal/domain"
+	"github.com/daxchain-io/daxie/internal/ens"
 	"github.com/daxchain-io/daxie/internal/erc"
 	"github.com/daxchain-io/daxie/internal/journal"
 	"github.com/daxchain-io/daxie/internal/keys"
@@ -140,9 +141,18 @@ type Service struct {
 	// guard stays green. Production injects a real sleeper.
 	sleep func(ctx context.Context, d time.Duration) error
 
-	// Later milestones add: ens *ens.Resolver (M7); contracts *registry.* (the M10
-	// contract registry). They are absent before their milestone by design. (M5's erc
-	// + tokens + discovery and M6's nfts are declared above.)
+	// ens is the M7 stateless ENS resolver namespace (§2.8): registry→resolver→addr
+	// forward resolution + forward-verified reverse + the ResolvePinned drift helper.
+	// Like erc it carries NO state — a single zero value serves every network and
+	// takes the request's chain.Client PER CALL (§2.8: no ens.Resolver interface; the
+	// test seam is the chain.Client fake one layer down, §2.1.1). The tx/nft/token/
+	// approve destination paths, the read-only balance path, the policy-allow/contact
+	// pin capture, and the `ens resolve|reverse` use cases all resolve through it.
+	ens ens.Resolver
+
+	// Later milestones add: contracts *registry.* (the M10 contract registry). It is
+	// absent before its milestone by design. (M5's erc + tokens + discovery, M6's nfts,
+	// and M7's ens are declared above.)
 }
 
 // Open composes the service from resolved options.
@@ -272,6 +282,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		policy:         peng,
 		contacts:       cbook,
 		erc:            erc.Ops{},
+		ens:            ens.Resolver{}, // M7: stateless ENS resolver, chain.Client per call (§2.8)
 		tokens:         tokenReg,
 		// The §2.10/§10.3 Discovery seam: in v1 the concrete impl is the registry-
 		// backed *Tokens (registry + bundled majors). Service holds the interface so a

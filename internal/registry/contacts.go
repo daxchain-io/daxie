@@ -62,6 +62,21 @@ func (c *Contacts) path() string { return filepath.Join(c.registryDir, "contacts
 // rule (§3.2) — this store enforces only the within-contacts duplicate; service
 // layers the keystore-collision check on top at add time (best-effort, §3.2).
 func (c *Contacts) Add(ctx context.Context, name string, addr common.Address) error {
+	return c.add(ctx, name, addr, "", "")
+}
+
+// AddWithENS is the M7 ENS-backed add: it pins the resolved 0x address (the
+// snapshot — §4.8: store the resolved address, never a bare name) AND records the
+// source ENS name + resolved-at timestamp for display and the contact's half of the
+// pin story. A later send to the contact re-resolves the contact (the snapshot) and
+// the §4.3 stage-4 contact_drift check refuses if it moved. The ENS string is
+// display/provenance only; the authoritative destination is always the pinned addr.
+func (c *Contacts) AddWithENS(ctx context.Context, name string, addr common.Address, ens, pinnedAt string) error {
+	return c.add(ctx, name, addr, ens, pinnedAt)
+}
+
+// add is the shared add path: canonicalize, lock, duplicate-guard, append, save.
+func (c *Contacts) add(ctx context.Context, name string, addr common.Address, ens, pinnedAt string) error {
 	canon, err := canonicalName(name)
 	if err != nil {
 		return err
@@ -77,7 +92,7 @@ func (c *Contacts) Add(ctx context.Context, name string, addr common.Address) er
 					"a contact named %q already exists; remove it first or choose another name", canon)
 			}
 		}
-		f.Contacts = append(f.Contacts, Contact{Name: canon, Address: addr})
+		f.Contacts = append(f.Contacts, Contact{Name: canon, Address: addr, ENS: ens, PinnedAt: pinnedAt})
 		return c.save(f)
 	})
 }

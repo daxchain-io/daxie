@@ -28,7 +28,12 @@ package archtest
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -280,6 +285,102 @@ func TestNoUnclassifiedInternalPackages(t *testing.T) {
 			t.Errorf("UNCLASSIFIED INTERNAL PACKAGE: %s classifies to layerExternal and is therefore ungoverned by the import matrix; register it in providerNames or frontendRoots (and the depguard + go-arch-lint lattices) so it lands on the correct side of the matrix", p.ImportPath)
 		}
 	}
+}
+
+// TestProviderConcreteness enforces the §2.1.1/§2.8 rule that the per-request
+// endpoint-binding providers (`ens.Resolver`, `erc.Ops`) are CONCRETE structs that
+// take a chain.Client PER CALL, NOT interfaces. §2.1.1 rejects an ens.Resolver
+// interface explicitly: the single load-bearing chain seam is the chain.Client fake
+// one layer down, so adding an ens.Resolver interface would invent a second,
+// redundant mock surface (and tempt a stateful resolver). The ENS pin-refusal test
+// proves drift via the chain.Client fake returning X then Y — never via an
+// ens.Resolver mock. This AST guard goes red the moment someone turns either named
+// type into an interface.
+//
+// It asserts, per provider package: the named type (Resolver / Ops) is declared as a
+// struct, and NO interface type of that name exists. A missing package is skipped
+// (the guard engages once the milestone authors the type) so it never fails an
+// earlier-milestone build.
+func TestProviderConcreteness(t *testing.T) {
+	root := moduleRoot(t)
+	cases := []struct {
+		pkgRel   string // internal-relative dir
+		typeName string // the concrete type that must be a struct, never an interface
+	}{
+		{"internal/ens", "Resolver"}, // §2.8: ens.Resolver is a concrete struct, chain.Client per call
+		{"internal/erc", "Ops"},      // §2.8: erc.Ops is a concrete struct, chain.Client per call
+	}
+	for _, c := range cases {
+		dir := filepath.Join(root, c.pkgRel)
+		if _, err := os.Stat(dir); err != nil {
+			t.Logf("provider package %s not present yet; concreteness guard idle but active", c.pkgRel)
+			continue
+		}
+		kind, found := namedTypeKind(t, dir, c.typeName)
+		if !found {
+			t.Errorf("CONCRETENESS: %s declares no type %q — the §2.8 per-call provider type is missing", c.pkgRel, c.typeName)
+			continue
+		}
+		switch kind {
+		case typeKindStruct:
+			// correct: a concrete struct
+		case typeKindInterface:
+			t.Errorf("CONCRETENESS VIOLATION: %s.%s is declared as an INTERFACE; §2.1.1/§2.8 require a CONCRETE struct taking chain.Client per call (the test seam is the chain.Client fake one layer down, NOT a provider-interface mock)", c.pkgRel, c.typeName)
+		default:
+			t.Errorf("CONCRETENESS: %s.%s is neither a struct nor an interface; §2.8 expects a concrete struct", c.pkgRel, c.typeName)
+		}
+	}
+}
+
+type namedTypeKindEnum int
+
+const (
+	typeKindOther namedTypeKindEnum = iota
+	typeKindStruct
+	typeKindInterface
+)
+
+// namedTypeKind parses every non-test .go file in dir and reports the declared kind
+// (struct / interface / other) of the top-level type named `name`. found=false when
+// no such type is declared in the package.
+func namedTypeKind(t *testing.T, dir, name string) (namedTypeKindEnum, bool) {
+	t.Helper()
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	for _, e := range entries {
+		fn := e.Name()
+		if e.IsDir() || !strings.HasSuffix(fn, ".go") || strings.HasSuffix(fn, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, filepath.Join(dir, fn), nil, parser.SkipObjectResolution)
+		if perr != nil {
+			t.Fatalf("parsing %s: %v", fn, perr)
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || ts.Name == nil || ts.Name.Name != name {
+					continue
+				}
+				switch ts.Type.(type) {
+				case *ast.StructType:
+					return typeKindStruct, true
+				case *ast.InterfaceType:
+					return typeKindInterface, true
+				default:
+					return typeKindOther, true
+				}
+			}
+		}
+	}
+	return typeKindOther, false
 }
 
 // TestNoViperOutsideConfigInTests guards the test code too: a _test.go file anywhere

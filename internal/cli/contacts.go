@@ -38,10 +38,13 @@ func newContactsCmd(ctx context.Context, rs *rootState) *cobra.Command {
 
 func newContactsAddCmd(ctx context.Context, rs *rootState) *cobra.Command {
 	return &cobra.Command{
-		Use:   "add <name> <address>",
+		Use:   "add <name> <address-or-ens>",
 		Short: "Add a name → address contact",
-		Long:  "Add a contact. The name follows the account-ref grammar; the address is a\nraw 0x address. A duplicate name is a usage error.",
-		Args:  cobra.ExactArgs(2),
+		Long: "Add a contact. The name follows the account-ref grammar; the address is a\n" +
+			"raw 0x address OR an ENS name (resolved NOW against the --network and pinned\n" +
+			"as the resolved 0x — a snapshot; the source ENS name is recorded for display).\n" +
+			"A duplicate name is a usage error.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, closeFn, err := openService(ctx, rs)
 			if err != nil {
@@ -51,13 +54,21 @@ func newContactsAddCmd(ctx context.Context, rs *rootState) *cobra.Command {
 			res, err := svc.ContactAdd(cmd.Context(), domain.LocalCLI(), domain.ContactAddRequest{
 				Name:    args[0],
 				Address: args[1],
+				// Network/RPC are read only when the address arg is an ENS name (resolved
+				// per-invocation, §2.8); a 0x address ignores them.
+				Network: rs.flags.Network,
+				RPC:     rs.flags.RPC,
 			})
 			if err != nil {
 				return err
 			}
 			m := rs.flags.Mode()
 			return render.Result(cmd.OutOrStdout(), m, res, func(w io.Writer) {
-				render.Line(w, m, "added contact %s -> %s", res.Contact.Name, res.Contact.Address)
+				if res.Contact.ENS != "" {
+					render.Line(w, m, "added contact %s -> %s (ens %s)", res.Contact.Name, res.Contact.Address, res.Contact.ENS)
+				} else {
+					render.Line(w, m, "added contact %s -> %s", res.Contact.Name, res.Contact.Address)
+				}
 			})
 		},
 	}

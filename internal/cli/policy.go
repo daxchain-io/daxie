@@ -504,6 +504,13 @@ func renderMutate(cmd *cobra.Command, rs *rootState, res service.PolicyMutateRes
 		if res.Bootstrapped {
 			render.Line(w, m, "%s: anchor bootstrapped (verify_key %s)", label, res.VerifyKey)
 		}
+		// §4.8 resolution echo (cli-spec: the resolved address is always echoed before
+		// signing): a name pin (ENS/contact) surfaces WHAT 0x was sealed so the operator
+		// authorizes the address, not the name. Printed BEFORE the applied line so it is
+		// visible alongside the seal it sealed. Empty for raw-0x pins and --remove.
+		if res.Pinned != "" {
+			render.Line(w, m, "%s: %s %s -> %s (pinned, resolved_at %s)", label, res.Source, res.Name, res.Pinned, res.ResolvedAt)
+		}
 		render.Line(w, m, "%s applied (nonce %s, watermark %s)", label, utoa64(res.Nonce), utoa64(res.Watermark))
 		if !res.AnchorWritten {
 			// Read-only config: the operator must land the anchor out of band. Print it
@@ -514,10 +521,13 @@ func renderMutate(cmd *cobra.Command, rs *rootState, res service.PolicyMutateRes
 	})
 }
 
-// resolvePinRequest turns the allow/deny argument into a service request. M4 pins a
-// raw 0x address directly; a contact name is snapshotted to its address; an ENS name
-// is M7 (rejected clean here so the surface never silently no-ops). For --remove a
-// name is carried so removal by name works without re-resolving.
+// resolvePinRequest turns the allow/deny argument into a service request. A raw 0x
+// address is pinned directly; an ENS name (M7) is passed through as Source:"ens" with
+// NO Address — the service resolves it NOW and pins name+resolved-address+resolved-at
+// (§4.8: store the resolved 0x, never a bare name; a later send re-resolves and the
+// §4.3 stage-4 gate refuses on drift). A contact name is passed through as
+// Source:"contact" — the service snapshots its current address as the pin. For
+// --remove a name is carried so removal by name works without re-resolving.
 func resolvePinRequest(arg, label string, remove bool, anchorOut string) (service.PolicyAllowRequest, error) {
 	ref, err := domain.ParseAccountRef(arg)
 	if err == nil && ref.Kind == domain.RefAddress {
@@ -525,34 +535,14 @@ func resolvePinRequest(arg, label string, remove bool, anchorOut string) (servic
 			Source: "address", Address: ref.Addr.Hex(), Label: label, Remove: remove, AnchorOut: anchorOut,
 		}, nil
 	}
-	// A name: ENS resolution at allow-time is M7. For --remove, allow removal by
-	// name (the engine removes by source+name). For an ADD of a name, M4 has no
-	// resolver yet → a clean usage error (never a silent unpinned name).
-	if isENSName(arg) {
-		if remove {
-			return service.PolicyAllowRequest{Source: "ens", Name: arg, Label: label, Remove: true, AnchorOut: anchorOut}, nil
-		}
-		return service.PolicyAllowRequest{}, domain.Newf(domain.CodeUsage+".unsupported",
-			"ENS allow-time resolution is M7; pin the resolved 0x address for %q for now", arg)
+	// An ENS name (".eth"): the service resolves at allow-time (M7) and pins the
+	// resolved address + name. For --remove the address is not needed (removal is by
+	// source+name).
+	if err == nil && ref.Kind == domain.RefENS {
+		return service.PolicyAllowRequest{Source: "ens", Name: arg, Label: label, Remove: remove, AnchorOut: anchorOut}, nil
 	}
-	// Treat as a contact name. M4 has no contact→address resolution wired into the
-	// policy path yet (M7); for --remove allow removal by name.
-	if remove {
-		return service.PolicyAllowRequest{Source: "contact", Name: arg, Label: label, Remove: true, AnchorOut: anchorOut}, nil
-	}
-	return service.PolicyAllowRequest{}, domain.Newf(domain.CodeUsage+".unsupported",
-		"contact allow-time resolution is M7; pin the resolved 0x address for %q for now", arg)
-}
-
-// isENSName reports a dotted name (a heuristic for the M4 surface: anything with a
-// dot is treated as ENS, mirroring the tx --to classification).
-func isENSName(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '.' {
-			return true
-		}
-	}
-	return false
+	// Otherwise a contact name: the service snapshots its current address as the pin.
+	return service.PolicyAllowRequest{Source: "contact", Name: arg, Label: label, Remove: remove, AnchorOut: anchorOut}, nil
 }
 
 // flagPtr returns a *string only when the named flag was CHANGED on the command

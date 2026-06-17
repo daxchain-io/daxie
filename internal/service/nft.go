@@ -480,7 +480,7 @@ func (s *Service) resolveNFTSendIntent(ctx context.Context, p domain.Principal, 
 	}
 
 	// ── To = the RECIPIENT (the policy subject; 0x | contact; ENS is M7) ──
-	dest, err := s.resolveDest(ctx, req.To)
+	dest, err := s.resolveDest(ctx, ChainRequest{Network: req.Network, RPC: req.RPC}, req.To)
 	if err != nil {
 		return Intent{}, err
 	}

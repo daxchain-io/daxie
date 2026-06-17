@@ -316,7 +316,7 @@ func (s *Service) TokenAllowance(ctx context.Context, _ domain.Principal, req do
 	}
 
 	// Spender: a 0x literal or a contact name (the same resolver tx/approve use).
-	spenderDest, err := s.resolveDest(ctx, req.Spender)
+	spenderDest, err := s.resolveDest(ctx, ChainRequest{Network: req.Network, RPC: req.RPC}, req.Spender)
 	if err != nil {
 		return domain.AllowanceResult{}, err
 	}

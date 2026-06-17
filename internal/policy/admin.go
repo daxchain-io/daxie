@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/daxchain-io/daxie/internal/domain"
@@ -84,6 +85,38 @@ func (e *Engine) Show() (Policy, SealStatus, error) {
 		return Policy{}, SealStatus{}, err
 	}
 	return res.policy, res.status, nil
+}
+
+// AllowlistPin returns the allow-time pinned address for an allowlist entry matched
+// by (source, name) — the §4.8 lookup the service's stage-4 pin-drift producer needs
+// so it can set Check.Dest to the PINNED address (not the fresh resolution): the
+// reconciliation in design §4.3 stages 3+4 requires Check.Dest == the allow-time pin
+// so stage 3 (allowlist) matches the pinned entry and stage 4 (pin_drift) is the gate
+// that fires on a re-pointed name, NOT a plain allowlist miss (which would outrank
+// pin_drift in §4.9 precedence and mask it).
+//
+// It returns (addr, true, nil) when a non-removed allowlist entry of that source has
+// a case-insensitively equal Name; (zero, false, nil) when no policy is active or no
+// such entry exists (the producer then sets Dest=fresh so stage 4 is a no-op); and a
+// FAIL-CLOSED error if the policy is present but its seal/rollback/version check fails
+// (a halted trust root must never be read as "no pin"). source is "ens" or "contact".
+func (e *Engine) AllowlistPin(source, name string) (common.Address, bool, error) {
+	if name == "" {
+		return common.Address{}, false, nil
+	}
+	p, present, err := e.loadActivePolicy()
+	if err != nil {
+		return common.Address{}, false, err // fail closed — a halted seal is not "unpinned"
+	}
+	if !present {
+		return common.Address{}, false, nil
+	}
+	for _, a := range p.Allowlist {
+		if a.Source == source && a.Name != "" && strings.EqualFold(a.Name, name) && a.Address != "" {
+			return common.HexToAddress(a.Address), true, nil
+		}
+	}
+	return common.Address{}, false, nil
 }
 
 // Verify reports whether the on-disk policy seal verifies under the pinned anchor

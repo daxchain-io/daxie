@@ -44,27 +44,35 @@ func (s *Service) Balance(ctx context.Context, p domain.Principal, req domain.Ba
 	if err != nil {
 		return domain.BalanceResult{}, err
 	}
-	// M7 path: ENS account ref. Plumbed but not active — fail clean.
-	if ref.Kind == domain.RefENS {
-		return domain.BalanceResult{}, domain.Newf(domain.CodeUsageUnsupported,
-			"ENS resolution (%s) lands in M7; pass a raw 0x address or a keystore account", ref.Raw)
-	}
-
-	// AddressOf is the §3.2 read-only resolver: a raw 0x returns its literal; an
-	// HD/standalone ref returns the cached plaintext address WITHOUT unlocking. A
-	// bare wallet name / unknown ref maps to ref.not_found here.
-	addr, err := s.keys.AddressOf(ref)
-	if err != nil {
-		return domain.BalanceResult{}, err
-	}
 
 	// Dial the request's endpoint (§2.8). The provider runs the chain-ID guard and
 	// maps a transport failure to rpc.unreachable (exit 6). The caller Close()s it.
+	// (Dialed BEFORE address resolution because an ENS read-only ref resolves against
+	// this same client — one dial per invocation, §2.8.)
 	cc, err := s.chains.ClientFor(ctx, ChainRequest{Network: req.Network, RPC: req.RPC})
 	if err != nil {
 		return domain.BalanceResult{}, err
 	}
 	defer cc.Close()
+
+	// Resolve the ref to an address. An ENS name (M7) is read-only-legal (§3.2: ENS
+	// is accepted wherever a read-only address is) — resolve it FRESH against the
+	// connected network's registry, never via the keystore (it is not a local
+	// object). Every other ref kind resolves through the §3.2 read-only AddressOf
+	// resolver (a raw 0x returns its literal; an HD/standalone ref returns the cached
+	// plaintext address WITHOUT unlocking; a bare/unknown ref maps to ref.not_found).
+	var addr common.Address
+	if ref.Kind == domain.RefENS {
+		addr, err = s.ens.Resolve(ctx, cc, ref.Raw)
+		if err != nil {
+			return domain.BalanceResult{}, mapENSErr(err, ref.Raw)
+		}
+	} else {
+		addr, err = s.keys.AddressOf(ref)
+		if err != nil {
+			return domain.BalanceResult{}, err
+		}
+	}
 
 	network := s.networkName(req.Network)
 	account := ""

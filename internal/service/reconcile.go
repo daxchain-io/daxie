@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/daxchain-io/daxie/internal/domain"
 	"github.com/daxchain-io/daxie/internal/journal"
@@ -169,9 +170,35 @@ func (s *Service) AbandonTx(ctx context.Context, p domain.Principal, req domain.
 // collision; a read-only mount fails the state-class read-only sibling (exit 10).
 func (s *Service) ContactAdd(ctx context.Context, p domain.Principal, req domain.ContactAddRequest) (domain.ContactResult, error) {
 	ref, err := domain.ParseAccountRef(req.Address)
-	if err != nil || ref.Kind != domain.RefAddress {
+	if err != nil || (ref.Kind != domain.RefAddress && ref.Kind != domain.RefENS) {
 		return domain.ContactResult{}, domain.Newf(domain.CodeUsage+".bad_address",
-			"contact address must be a 0x address, got %q", req.Address)
+			"contact address must be a 0x address or an ENS name, got %q", req.Address)
+	}
+	// An ENS name (M7): resolve it NOW against the request's network and pin the
+	// resolved 0x — a snapshot (§4.8: store the resolved address, never a bare name).
+	// The source ENS name is recorded for display and the contact's half of the pin
+	// story (a later send re-reads the snapshot; the §4.3 stage-4 contact_drift gate
+	// refuses if the contact was re-pointed to a different address).
+	if ref.Kind == domain.RefENS {
+		cc, derr := s.chains.ClientFor(ctx, ChainRequest{Network: req.Network, RPC: req.RPC})
+		if derr != nil {
+			return domain.ContactResult{}, derr
+		}
+		defer cc.Close()
+		addr, rerr := s.ens.Resolve(ctx, cc, req.Address)
+		if rerr != nil {
+			return domain.ContactResult{}, mapENSErr(rerr, req.Address)
+		}
+		pinnedAt := s.Now().UTC().Format(time.RFC3339)
+		if err := s.contacts.AddWithENS(ctx, req.Name, addr, req.Address, pinnedAt); err != nil {
+			return domain.ContactResult{}, err
+		}
+		return domain.ContactResult{Contact: domain.ContactRow{
+			Name:     req.Name,
+			Address:  addr.Hex(),
+			ENS:      req.Address,
+			PinnedAt: pinnedAt,
+		}}, nil
 	}
 	if err := s.contacts.Add(ctx, req.Name, ref.Addr); err != nil {
 		return domain.ContactResult{}, err

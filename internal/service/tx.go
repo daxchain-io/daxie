@@ -108,6 +108,65 @@ func (in *Intent) checkDest() common.Address {
 	return in.to
 }
 
+// applyDestProvenance is the §4.3 STAGE-4 PIN-DRIFT PRODUCER (the one load-bearing
+// M7 wiring): it sets the Check's ToSrc/ToInput/ENSName/ENSResolved/Dest from the
+// resolved destination's provenance so the engine's already-existing pin-drift gate
+// fires correctly. The engine compares only — it does no network I/O; this supplies
+// the fresh resolution + the allow-time pin.
+//
+// The subtle reconciliation (design §4.3 stages 3+4, plan §3-B): both stages read
+// Check.Dest but with opposite meanings — stage 3 (allowlist) matches Dest against a
+// pinned address; stage 4 (pin_drift) treats Dest as the allow-time PIN and
+// ENSResolved as the FRESH resolution. They reconcile only if, for a pinned ENS/
+// contact name, Check.Dest = the ALLOW-TIME PIN (so stage 3 matches the pinned entry
+// and the refusal surfaces as pin_drift, which §4.9 ranks BELOW allowlist — Dest=pin
+// keeps stage 3 passing so pin_drift is the only gate that fires) and
+// Check.ENSResolved = the fresh resolution. When NO pin exists for the name, both are
+// set to the fresh resolution so stage 4 is a no-op (fresh==fresh, no false drift).
+//
+// fresh is the per-invocation resolution already done pre-lock (in.checkDest()); no
+// second network call happens here (the §4.3 invariant: no I/O inside the lock).
+func (s *Service) applyDestProvenance(check *policy.Check, in *Intent) error {
+	fresh := in.checkDest()
+	switch in.dest.Via {
+	case "ens":
+		check.ToSrc = policy.SourceENS
+		check.ENSName = in.dest.ENSName
+		check.ToInput = in.dest.ENSName
+		check.ENSResolved = fresh
+		// Look up the allow-time pin for this ENS name. If found, Dest = the pin (stage
+		// 3 matches it; stage 4 compares fresh vs pin → ens_drift on a re-point). If
+		// absent, Dest = fresh (stage 4 no-op). A halted seal fails closed.
+		pin, found, err := s.policy.AllowlistPin("ens", in.dest.ENSName)
+		if err != nil {
+			return err
+		}
+		if found {
+			check.Dest = pin
+		} else {
+			check.Dest = fresh
+		}
+	case "contact":
+		check.ToSrc = policy.SourceContact
+		check.ToInput = in.dest.Name
+		check.ENSResolved = fresh
+		pin, found, err := s.policy.AllowlistPin("contact", in.dest.Name)
+		if err != nil {
+			return err
+		}
+		if found {
+			check.Dest = pin
+		} else {
+			check.Dest = fresh
+		}
+	default:
+		// literal 0x / self / RBF-built: a raw address cannot drift — leave ToSrc as
+		// SourceRawAddress (the zero value) and Dest as the literal recipient.
+		check.ToSrc = policy.SourceRawAddress
+	}
+	return nil
+}
+
 // checkAsset returns the policy Asset tag: "eth" for a plain ETH send (no
 // data/approval), else the lowercase token contract address. The stage-3c
 // fail-closed rule + isTokenOrApproval read this (a non-"eth" Asset marks a
@@ -339,6 +398,13 @@ func (s *Service) runSend(ctx context.Context, p domain.Principal, in *Intent, w
 	// ── optional wait (§5.3) — runs AFTER the lock is released (settle freed it) ──
 	if wait.Enabled {
 		wres, werr := s.waitOnHash(ctx, p, in.cc, in.network, a.hash, a.journalID, in.chainID, wait, sink)
+		// waitOnHash rebuilds To from the journal record (a bare 0x address — the
+		// journal never stores the human provenance), which would drop the ENS/contact
+		// Via+ENSName the resolved-address echo carried (§4.8: the result block surfaces
+		// the name the agent/human sent to). Re-overlay the in-memory dest provenance
+		// when the resolved address still matches, on BOTH the success and the error
+		// (e.g. reverted/timeout) result so the rendered destination is consistent.
+		wres.To = overlayDestProvenance(wres.To, in.dest)
 		if werr != nil {
 			return wres, werr
 		}
@@ -427,6 +493,13 @@ func (s *Service) authorize(ctx context.Context, p domain.Principal, in Intent, 
 		// candidate into the SAME entry (max-across-candidates) instead of
 		// double-counting value+gas in the rolling-24h window.
 		AccountNonce: &nonce,
+	}
+	// §4.3 stage-4 producer (M7): set ToSrc/ENSName/ToInput/ENSResolved + (for a
+	// pinned name) Dest=the allow-time pin, so a re-pointed ENS/contact name is
+	// refused with policy.denied.pin_drift. A halted seal fails closed here.
+	if err := s.applyDestProvenance(&check, &in); err != nil {
+		_ = lease.Release()
+		return authorized{}, err
 	}
 	reservation, err := s.policy.Reserve(ctx, check)
 	if err != nil {
@@ -661,7 +734,7 @@ func (s *Service) resolveIntent(ctx context.Context, p domain.Principal, req dom
 	}
 
 	// ── To: resolve the destination (0x → contact → ENS) ──
-	dest, err := s.resolveDest(ctx, req.To)
+	dest, err := s.resolveDest(ctx, ChainRequest{Network: req.Network, RPC: req.RPC}, req.To)
 	if err != nil {
 		return Intent{}, err
 	}
@@ -794,7 +867,7 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 	if worst == nil {
 		worst = big.NewInt(0)
 	}
-	dec, err := s.policy.Evaluate(ctx, policy.Check{
+	check := policy.Check{
 		Account: in.from,
 		// Mirror authorize EXACTLY (§5.1: --dry-run runs the full verdict): the policy
 		// dest is the decoded recipient/spender (NOT the token contract), the asset is
@@ -816,7 +889,14 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 		// against the superseded entry (in.nonce is the pinned nonce on the RBF path,
 		// nil for a normal send — harmless then).
 		AccountNonce: in.nonce,
-	})
+	}
+	// §4.3 stage-4 producer (M7): a --dry-run / `policy check` MUST run the same
+	// pin-drift comparison the real send does, so an agent pre-flights a re-pointed
+	// name and sees policy.denied.pin_drift before burning a signing attempt.
+	if err := s.applyDestProvenance(&check, in); err != nil {
+		return domain.TxResult{}, err
+	}
+	dec, err := s.policy.Evaluate(ctx, check)
 	if err != nil {
 		return domain.TxResult{}, err
 	}
@@ -861,6 +941,27 @@ func (s *Service) txResult(in *Intent, a authorized, st domain.TxStatus) domain.
 		Status:    st,
 		JournalID: a.journalID,
 	}
+}
+
+// overlayDestProvenance re-applies the in-memory destination provenance (Name/Via/
+// ENSName) onto a result Dest that was rebuilt from a journal record (which stores
+// only the resolved 0x address). It is a no-op unless the two addresses match — a
+// guard so a re-derived result for a DIFFERENT tx (it never happens on this path,
+// but the guard keeps the overlay honest) can never paint the wrong name onto an
+// address. Used after waitOnHash so the §4.8 result block still shows the ENS/contact
+// name the send was addressed to. When `mem` carries no provenance (a raw-address
+// send / RBF), the journal-derived Dest is returned unchanged.
+func overlayDestProvenance(fromRecord, mem domain.Dest) domain.Dest {
+	if mem.Via == "" && mem.Name == "" && mem.ENSName == "" {
+		return fromRecord
+	}
+	if fromRecord.Address != mem.Address {
+		return fromRecord
+	}
+	fromRecord.Name = mem.Name
+	fromRecord.Via = mem.Via
+	fromRecord.ENSName = mem.ENSName
+	return fromRecord
 }
 
 // signedRecord builds the journal Record for the status=signed append (§5.6).

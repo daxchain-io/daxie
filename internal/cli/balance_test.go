@@ -34,14 +34,16 @@ func TestBalanceTokenAndAllExit2(t *testing.T) {
 	}
 }
 
-func TestBalanceENSRejectedExit2(t *testing.T) {
+// M7 ACTIVATES read-only ENS: `balance vitalik.eth` is no longer pre-rejected as
+// usage.unsupported (the M6 behavior). It now flows into the resolve+read path, which
+// reaches the network (an unconfigured/unreachable endpoint fails on the dial/rpc
+// channel, NOT with the old exit-2 usage.unsupported reject). The full resolved-read
+// against a real endpoint lives in the //go:build integration suite.
+func TestBalanceENSNoLongerUnsupported(t *testing.T) {
 	isolateEnv(t)
-	_, stderr, code := execCLI(t, "balance", "vitalik.eth", "--json")
-	if code != int(domain.ExitUsage) {
-		t.Fatalf("exit = %d, want %d (USAGE)", code, domain.ExitUsage)
-	}
-	if !strings.Contains(stderr, domain.CodeUsageUnsupported) {
-		t.Errorf("expected usage.unsupported for an ENS arg:\n%s", stderr)
+	_, stderr, _ := execCLI(t, "balance", "vitalik.eth", "--json")
+	if strings.Contains(stderr, "lands in M7") || strings.Contains(stderr, domain.CodeUsageUnsupported) {
+		t.Errorf("balance <ens> still returns the M6 unsupported reject:\n%s", stderr)
 	}
 }
 

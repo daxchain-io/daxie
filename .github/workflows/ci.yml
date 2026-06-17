@@ -211,9 +211,20 @@ jobs:
         # detection (721 vs 1155; non-NFT rejected) → nft send (721 ownerOf moves; 1155
         # balanceOf moves --amount) → nft show, plus the fail-closed-no-allowlist NFT
         # send deny exit 3 — ETH exempt, NFT NOT — and the policy-dest-is-the-recipient
-        # invariant). The `./...` +
+        # invariant), and M7's ENS surface against a freshly-deployed MOCK ENS registry
+        # +resolver (internal/testchain/ens.go + ensbytecode.go deploy/setAddr/setName +
+        # raw-RPC readers; the mock is injected as the chain-31337 registry via the
+        # integration-only ens.SetTestRegistry hook). The
+        # internal/service/ens_integration_test.go + internal/cli/ens_integration_test.go
+        # scenarios: ens resolve == on-chain addr → tx send --to name.eth lands at the
+        # resolved address (echoed before signing) → policy allow name.eth pins
+        # name+resolved-addr+resolved-at, a matching-pin send confirms, then RE-POINTING
+        # the resolver makes the next send DENY policy.denied.pin_drift (reason ens_drift,
+        # exit 3, nothing signed — the §4.3 stage-4 gate M7 activates) → reverse is
+        # forward-verified (a broken forward record yields an unverified empty name). The
+        # `./...` +
         # `-tags integration` already compiles and runs every //go:build integration
-        # file, so the M3+M5+M6 tests are covered without a new job; CGO=1 so -race is
+        # file, so the M3+M5+M6+M7 tests are covered without a new job; CGO=1 so -race is
         # available on the one job that talks to a real EVM (shipped binaries stay
         # CGO_ENABLED=0).
         env:
@@ -345,3 +356,30 @@ jobs:
         run: |
           chmod +x docs/demos/m06.sh
           DAXIE="$PWD/daxie" docs/demos/m06.sh
+
+  demo-m07:
+    name: m07 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m07.sh unmodified
+        # The M7 ENS acceptance demo (§10.1 gate, v0.7.0): ENS resolution + the
+        # allowlist pin-drift refusal. DRY: `ens resolve|reverse` exist; a reverse of a
+        # non-address ⇒ exit 2. LIVE (anvil + cast on PATH via foundry-toolchain):
+        # start anvil as chain-id 1 and plant a mock ENS at the canonical registry
+        # address via anvil_setCode (so the shipped binary's RegistryFor(1) finds it),
+        # register a name, `ens resolve` == the registered addr, an unregistered name ⇒
+        # exit 10 ref.not_found, `tx send --to name.eth` lands at the resolved address
+        # (echoed before signing), `policy allow name.eth` pins name+resolved-addr, a
+        # matching-pin send confirms, then RE-POINTING the name ⇒ the next send DENIES
+        # policy.denied.pin_drift (exit 3, nothing signed). Asserts §5.7 codes 0/2/3/10.
+        run: |
+          chmod +x docs/demos/m07.sh
+          DAXIE="$PWD/daxie" docs/demos/m07.sh

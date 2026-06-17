@@ -118,13 +118,20 @@ func TestPolicyChangeAdminRequiresPhaseExit2(t *testing.T) {
 	}
 }
 
-// `policy allow` of a bare ENS/contact name (no resolver in M4) fails clean (exit 2),
-// never a silent unpinned name (the §4.8 invariant: pins are resolved 0x, never names).
-func TestPolicyAllowNameUnsupportedExit2(t *testing.T) {
+// M7 ACTIVATES ENS allow-time resolution: `policy allow vitalik.eth` is no longer
+// rejected at the CLI as usage.unsupported (the M4 behavior). It now flows into the
+// admin-gated mutation path (resolve the name → pin name+address). With no admin
+// passphrase configured + non-interactive, it fails on the admin-auth channel — NOT
+// with the old exit-2 usage rejection. (The full pin+drift round-trip is exercised
+// against a deployed mock ENS in the //go:build integration suite.)
+func TestPolicyAllowENSNoLongerUnsupported(t *testing.T) {
 	isolateEnv(t)
-	_, _, code := execCLI(t, "policy", "allow", "vitalik.eth")
-	if code != int(domain.ExitUsage) {
-		t.Fatalf("policy allow <ens> (M4) exit = %d, want 2 (unsupported)", code)
+	_, stderr, code := execCLI(t, "policy", "allow", "vitalik.eth")
+	if code == 0 {
+		t.Fatalf("policy allow vitalik.eth (no admin) unexpectedly succeeded")
+	}
+	if code == int(domain.ExitUsage) && strings.Contains(stderr, "lands in M7") {
+		t.Fatalf("policy allow <ens> still returns the M4 unsupported reject: %q", stderr)
 	}
 }
 

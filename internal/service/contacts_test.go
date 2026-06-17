@@ -109,10 +109,13 @@ func TestSendTx_UnknownRecipient_Exit10(t *testing.T) {
 	}
 }
 
-func TestSendTx_ENSRecipient_RejectedM7(t *testing.T) {
+// M7 ACTIVATES ENS as a `--to` destination: an UNRESOLVABLE name is now
+// ref.not_found (exit 10) — it resolves against the network instead of the M6
+// usage.unsupported reject, and never signs to an all-zero address.
+func TestSendTx_ENSRecipient_UnresolvedIsRefNotFound(t *testing.T) {
 	from := someAddr(75)
-	svc, _, _ := sendService(t, from)
+	svc, _, _ := sendService(t, from) // bare fake ⇒ the name has no on-chain record
 	req := domain.TxRequest{From: from.Hex(), To: "vitalik.eth", Amount: "1wei"}
 	_, err := svc.SendTx(context.Background(), domain.LocalCLI(), req, nil)
-	assertCode(t, err, domain.CodeUsageUnsupported)
+	assertCode(t, err, domain.CodeRefNotFound)
 }

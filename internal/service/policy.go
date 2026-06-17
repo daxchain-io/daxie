@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/daxchain-io/daxie/internal/config"
 	"github.com/daxchain-io/daxie/internal/domain"
@@ -136,6 +137,17 @@ type PolicyMutateResult struct {
 	VerifyKey     string `json:"verify_key,omitempty"`
 	VerifyKeyNext string `json:"verify_key_next,omitempty"` // set after change-admin-passphrase --stage
 	Bootstrapped  bool   `json:"bootstrapped,omitempty"`    // first set created the anchor
+
+	// allow/deny RESOLUTION ECHO (§4.8 / cli-spec "the resolved address is always
+	// echoed"): when an allow/deny pinned a name (ENS or contact) by resolving it NOW,
+	// these surface WHAT 0x was sealed so the operator authorizes the address — not a
+	// bare name — before the seal is written. Source is "ens"|"contact"; Pinned is the
+	// resolved 0x; ResolvedAt is the snapshot timestamp. Empty for a raw-0x pin (the
+	// address was already on screen) and for --remove (no resolution happened).
+	Source     string `json:"source,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Pinned     string `json:"pinned,omitempty"`      // the resolved 0x that was sealed
+	ResolvedAt string `json:"resolved_at,omitempty"` // the §4.8 resolved-at timestamp
 }
 
 // PolicyCheckResult is the `policy check` what-if verdict (§4.7): the full Decision,
@@ -341,14 +353,44 @@ func (s *Service) PolicySet(_ context.Context, _ domain.Principal, req PolicySet
 
 // PolicyAllow / PolicyDeny pin (or --remove) an allow/deny entry under the admin
 // passphrase. The cli pre-resolves the input to a pinned 0x address (§4.8).
-func (s *Service) PolicyAllow(_ context.Context, _ domain.Principal, req PolicyAllowRequest, in AdminInput) (PolicyMutateResult, error) {
+func (s *Service) PolicyAllow(ctx context.Context, _ domain.Principal, req PolicyAllowRequest, in AdminInput) (PolicyMutateResult, error) {
 	adminPass, _, err := s.acquireAdmin(in)
 	if err != nil {
 		return PolicyMutateResult{}, err
 	}
 	defer adminPass.Zero()
+	pin := policy.PinEntry{Source: req.Source, Address: strings.ToLower(req.Address), Name: req.Name, Label: req.Label}
+	// M7 ENS allow-time pin (§4.8): `policy allow vitalik.eth` resolves the name NOW
+	// and pins BOTH the name AND the resolved 0x + the resolved-at timestamp. A later
+	// send to that name re-resolves and the §4.3 stage-4 gate refuses with
+	// policy.denied.pin_drift if the resolution moved. We store the resolved address —
+	// never a bare name (the engine pins exactly what it is handed). A --remove is
+	// by-name only (no resolution needed).
+	if req.Source == "ens" && !req.Remove {
+		addr, rerr := s.resolveENSForPin(ctx, req.Name)
+		if rerr != nil {
+			return PolicyMutateResult{}, rerr
+		}
+		pin.Address = strings.ToLower(addr.Hex())
+		pin.ResolvedAt = s.Now().UTC().Format(time.RFC3339)
+	}
+	// A contact ADD pins the contact's CURRENT address (the snapshot, §4.8): a later
+	// send re-reads the contact and the §4.3 stage-4 contact_drift gate refuses if it
+	// moved. An unknown contact name is ref.not_found (exit 10).
+	if req.Source == "contact" && !req.Remove {
+		addr, found, rerr := s.contacts.Resolve(ctx, req.Name)
+		if rerr != nil {
+			return PolicyMutateResult{}, rerr
+		}
+		if !found {
+			return PolicyMutateResult{}, domain.Newf(domain.CodeRefNotFound,
+				"contact %q is not in the address book (add it with `daxie contacts add`)", req.Name)
+		}
+		pin.Address = strings.ToLower(addr.Hex())
+		pin.ResolvedAt = s.Now().UTC().Format(time.RFC3339)
+	}
 	entry := policy.AllowEntry{
-		PinEntry:    policy.PinEntry{Source: req.Source, Address: strings.ToLower(req.Address), Name: req.Name, Label: req.Label},
+		PinEntry:    pin,
 		Remove:      req.Remove,
 		RefreshSelf: s.selfSnapshot(),
 		WrittenBy:   version.Version,
@@ -357,18 +399,34 @@ func (s *Service) PolicyAllow(_ context.Context, _ domain.Principal, req PolicyA
 	if serr != nil {
 		return PolicyMutateResult{}, serr
 	}
-	return s.finishMutation(anchor, req.AnchorOut, false)
+	res, ferr := s.finishMutation(anchor, req.AnchorOut, false)
+	if ferr != nil {
+		return PolicyMutateResult{}, ferr
+	}
+	return withPinEcho(res, pin, req.Remove), nil
 }
 
 // PolicyDeny mirrors PolicyAllow into the denylist (§4.8).
-func (s *Service) PolicyDeny(_ context.Context, _ domain.Principal, req PolicyDenyRequest, in AdminInput) (PolicyMutateResult, error) {
+func (s *Service) PolicyDeny(ctx context.Context, _ domain.Principal, req PolicyDenyRequest, in AdminInput) (PolicyMutateResult, error) {
 	adminPass, _, err := s.acquireAdmin(in)
 	if err != nil {
 		return PolicyMutateResult{}, err
 	}
 	defer adminPass.Zero()
+	pin := policy.PinEntry{Source: req.Source, Address: strings.ToLower(req.Address), Name: req.Name, Label: req.Label}
+	// M7: a deny on an ENS name is matched by NAME (stageDenylist broadens ens/contact
+	// deny entries by typed name so a re-pointed denied name stays blocked, §4.8), but
+	// resolving + pinning the address NOW also blocks the resolved 0x directly. Best
+	// effort: if the name does not resolve, the by-name deny still stands (an empty
+	// Address keeps the name match working). A --remove is by-name only.
+	if req.Source == "ens" && !req.Remove {
+		if addr, rerr := s.resolveENSForPin(ctx, req.Name); rerr == nil {
+			pin.Address = strings.ToLower(addr.Hex())
+			pin.ResolvedAt = s.Now().UTC().Format(time.RFC3339)
+		}
+	}
 	entry := policy.DenyEntry{
-		PinEntry:    policy.PinEntry{Source: req.Source, Address: strings.ToLower(req.Address), Name: req.Name, Label: req.Label},
+		PinEntry:    pin,
 		Remove:      req.Remove,
 		RefreshSelf: s.selfSnapshot(),
 		WrittenBy:   version.Version,
@@ -377,7 +435,11 @@ func (s *Service) PolicyDeny(_ context.Context, _ domain.Principal, req PolicyDe
 	if serr != nil {
 		return PolicyMutateResult{}, serr
 	}
-	return s.finishMutation(anchor, req.AnchorOut, false)
+	res, ferr := s.finishMutation(anchor, req.AnchorOut, false)
+	if ferr != nil {
+		return PolicyMutateResult{}, ferr
+	}
+	return withPinEcho(res, pin, req.Remove), nil
 }
 
 // PolicyCountersRelease releases a stuck reservation by id under the admin
@@ -517,6 +579,27 @@ func (s *Service) finishMutation(anchor policyseal.Anchor, anchorOut string, boo
 	}
 	res.AnchorWritten = true
 	return res, nil
+}
+
+// withPinEcho surfaces the §4.8 resolution echo on an allow/deny result: when the
+// pin was produced by resolving a name NOW (ENS or contact), it carries the source,
+// the name, the resolved 0x that was sealed, and the resolved-at timestamp so the
+// operator authorizes the ADDRESS — not a bare name — before the seal is written
+// (cli-spec: "the resolved address is always echoed (and included in --json output)
+// before signing"). It is a no-op for a raw-0x pin (the address was already on the
+// command line) and for --remove (no resolution happens). The signal that a
+// resolution occurred is a non-empty ResolvedAt: the deny-by-name best-effort path
+// (§4.8) leaves both Address and ResolvedAt empty when the name does not resolve, so
+// there is nothing resolved to echo.
+func withPinEcho(res PolicyMutateResult, pin policy.PinEntry, remove bool) PolicyMutateResult {
+	if remove || pin.ResolvedAt == "" || (pin.Source != "ens" && pin.Source != "contact") {
+		return res
+	}
+	res.Source = pin.Source
+	res.Name = pin.Name
+	res.Pinned = pin.Address
+	res.ResolvedAt = pin.ResolvedAt
+	return res
 }
 
 // selfSnapshot returns the live keystore addresses to seal into self_addresses
