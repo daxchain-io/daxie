@@ -14,7 +14,8 @@ import (
 type FlagValues struct {
 	JSON     bool   // --json: machine output
 	Quiet    bool   // --quiet: suppress non-essential human lines
-	Network  string // --network: default-network override (inert wrt I/O in M0)
+	Network  string // --network: default-network override (the per-call chain)
+	RPC      string // --rpc: per-invocation endpoint override (selects an ENDPOINT, never a network)
 	Config   string // --config: config file or dir
 	Keystore string // --keystore: keystore dir
 	StateDir string // --state-dir: mutable state dir
@@ -37,6 +38,7 @@ func (f FlagValues) ServiceOptions() service.Options {
 		Keystore: f.Keystore,
 		StateDir: f.StateDir,
 		Network:  f.Network,
+		RPC:      f.RPC,
 	}
 }
 

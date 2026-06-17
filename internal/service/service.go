@@ -53,6 +53,21 @@ type Service struct {
 	// account fall through flag>env>meta.json.
 	account string
 
+	// chains is the §2.8 per-request endpoint binding (M2): it resolves a
+	// command's (network, endpoint) selection into a dialed chain.Client. v1 is a
+	// stateless dialingProvider (dial per call, no pool/failover). Use cases that
+	// touch the chain (balance, rpc test, and later gas/send/receive/contract)
+	// resolve their client through this and Close() it. It is an interface only so
+	// tests can inject a fake-returning provider.
+	chains ChainProvider
+
+	// defaultNetwork / defaultRPC hold the per-process network + endpoint defaults
+	// the frontend resolved (Options.Network / Options.RPC). Use cases build a
+	// ChainRequest from a command-level override layered over these (§2.8). Kept on
+	// the service (not re-read from os) so the determinism guard stays satisfied.
+	defaultNetwork string
+	defaultRPC     string
+
 	// secretIO holds the host primitives secret.Acquire needs (stdin, env lookup,
 	// TTY check). The core uses them to resolve passphrases/mnemonics/keys WITHOUT
 	// importing os (§2.3); the cli frontend fills them in Options.Secret.
@@ -115,13 +130,21 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	}
 
 	return &Service{
-		cfg:      cfg,
-		paths:    paths,
-		clock:    clock,
-		keys:     ks,
-		signer:   ks.Signer(),
-		account:  opts.Account,
-		secretIO: opts.Secret,
+		cfg:            cfg,
+		paths:          paths,
+		clock:          clock,
+		keys:           ks,
+		signer:         ks.Signer(),
+		account:        opts.Account,
+		secretIO:       opts.Secret,
+		defaultNetwork: opts.Network,
+		defaultRPC:     opts.RPC,
+		// The §2.8 chain provider. It is stateless (dial per call) so Open dials
+		// NOTHING here — it only captures the merged config + the per-process
+		// defaults; the first dial happens when a chain-touching use case runs. This
+		// keeps Open lazy (§7.3): an empty environment still composes cleanly and
+		// only a balance/rpc-test command reaches the network.
+		chains: newDialingProvider(cfg, opts.Network, opts.RPC),
 	}, nil
 }
 

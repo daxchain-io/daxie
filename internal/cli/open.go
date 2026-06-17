@@ -35,6 +35,29 @@ func openService(ctx context.Context, rs *rootState) (*service.Service, func(), 
 		}
 	}
 
+	// §7.4 default-network override is flag>env: --network, else DAXIE_NETWORK. The
+	// design's K8s guidance (a read-only ConfigMap) is to pass --network/--rpc per
+	// call or set DAXIE_NETWORK; the frontend reads the env (the determinism-guarded
+	// core may not) so an operator's DAXIE_NETWORK actually selects the chain rather
+	// than silently falling through to the built-in default. Mirrors the
+	// DAXIE_RPC/DAXIE_ACCOUNT siblings.
+	if opts.Network == "" {
+		if v, ok := os.LookupEnv("DAXIE_NETWORK"); ok {
+			opts.Network = v
+		}
+	}
+
+	// The §2.8 per-invocation endpoint override is flag>env: --rpc, else DAXIE_RPC.
+	// The frontend reads the env (the determinism-guarded core may not) and threads
+	// the resolved value into service.Options so the ChainProvider sees one default
+	// endpoint override per process. An unset value means "use the network's
+	// default-rpc" (no failover in v1, §7.5).
+	if opts.RPC == "" {
+		if v, ok := os.LookupEnv("DAXIE_RPC"); ok {
+			opts.RPC = v
+		}
+	}
+
 	opts.Secret = service.SecretIO{
 		Stdin:     os.Stdin,
 		LookupEnv: os.LookupEnv,

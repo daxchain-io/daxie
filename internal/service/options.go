@@ -24,7 +24,16 @@ type Options struct {
 	Config   string // --config (file or dir)
 	Keystore string // --keystore
 	StateDir string // --state-dir
-	Network  string // --network (default-network override; inert wrt I/O in M0)
+	Network  string // --network (default-network override; the per-process default chain)
+
+	// RPC is the §2.8/§7.5 per-invocation endpoint override (--rpc / DAXIE_RPC).
+	// Empty means "use the selected network's default-rpc". It selects an ENDPOINT,
+	// never a network: --rpc naming a network fails ref.not_found (strict
+	// separation). The cli frontend fills it from --rpc>DAXIE_RPC; the core threads
+	// it into each ChainRequest so a command can read a different endpoint per call
+	// without reconfiguring the default (no failover in v1, just one default +
+	// override).
+	RPC string // --rpc (endpoint override); "" = the network's default-rpc
 
 	// Clock is the single injected time source (§2.3 determinism guard). The
 	// core never calls time.Now directly; it reads wall time only through this

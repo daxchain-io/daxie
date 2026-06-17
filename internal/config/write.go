@@ -82,6 +82,106 @@ func SetKey(p Paths, key, value string) error {
 	return nil
 }
 
+// mutateRaw runs the §7.4 read-modify-write transaction for the object mutators
+// (network/rpc add/use/rename/remove) under the config.lock sidecar: it lazily
+// creates the config dir, takes the lock, loads the raw config into a map, calls
+// apply to mutate it in place, then rewrites atomically. apply returns an error to
+// ABORT the write (e.g. a not-found / read-only / duplicate check the mutator runs
+// after seeing the current file state); the partial mutation is discarded because
+// nothing is written. A read-only mount maps to config.read_only at every step
+// (mkdir, load, write) — never an opaque permission error (§7.10).
+//
+// This is the same transaction SetKey performs; SetKey predates it and keeps its
+// own inline body, but every M2 object mutator funnels through here so the
+// lock/dir/read-only discipline lives in one place.
+func mutateRaw(p Paths, apply func(raw map[string]any) error) error {
+	if err := fsx.MkdirAll(p.ConfigDir, 0o700); err != nil {
+		if fsx.IsReadOnly(err) {
+			return readOnlyErr(p.ConfigFile, err)
+		}
+		return domain.Wrap(domain.CodeConfigInvalid,
+			"creating config dir "+p.ConfigDir+": "+err.Error(), err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	unlock, err := fsx.Lock(ctx, p.ConfigFile)
+	if err != nil {
+		return mapLockErr(p.ConfigFile, err)
+	}
+	defer unlock()
+
+	raw, err := loadRawForWrite(p.ConfigFile)
+	if err != nil {
+		return err
+	}
+	if _, ok := raw["schema"]; !ok {
+		raw["schema"] = int64(SchemaVersion)
+	}
+	if err := apply(raw); err != nil {
+		return err
+	}
+
+	data, err := toml.Marshal(raw)
+	if err != nil {
+		return domain.Wrap(domain.CodeConfigInvalid, "encoding config: "+err.Error(), err)
+	}
+	if err := fsx.WriteAtomic(p.ConfigFile, data, configMode); err != nil {
+		if fsx.IsReadOnly(err) {
+			return readOnlyErr(p.ConfigFile, err)
+		}
+		return domain.Wrap(domain.CodeConfigInvalid,
+			"writing "+p.ConfigFile+": "+err.Error(), err)
+	}
+	return nil
+}
+
+// rawSubTable returns the nested table at the dotted key, or nil if absent or not
+// a table. It does not create intermediate tables (read-only lookup).
+func rawSubTable(m map[string]any, parts ...string) map[string]any {
+	cur := m
+	for _, p := range parts {
+		next, ok := cur[p].(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	return cur
+}
+
+// deleteNested removes a dotted key from a nested map, pruning a now-empty parent
+// table it created no siblings in. It is the inverse of setNested.
+func deleteNested(m map[string]any, key string) {
+	parts := splitKey(key)
+	if len(parts) == 1 {
+		delete(m, parts[0])
+		return
+	}
+	parent := rawSubTable(m, parts[:len(parts)-1]...)
+	if parent == nil {
+		return
+	}
+	delete(parent, parts[len(parts)-1])
+	if len(parent) == 0 {
+		// Prune the empty parent table so a removed [rpc.x] does not leave an empty
+		// [rpc] block behind.
+		deleteNested(m, joinKey(parts[:len(parts)-1]))
+	}
+}
+
+// joinKey rejoins dotted segments.
+func joinKey(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += "."
+		}
+		out += p
+	}
+	return out
+}
+
 // loadRawForWrite reads the existing config into a map for rewrite, returning an
 // empty map when the file does not yet exist (the fresh-write case).
 func loadRawForWrite(file string) (map[string]any, error) {

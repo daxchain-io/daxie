@@ -48,6 +48,7 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 	pf.BoolVar(&rs.flags.JSON, "json", false, "machine-readable JSON output")
 	pf.BoolVar(&rs.flags.Quiet, "quiet", false, "suppress non-essential human output")
 	pf.StringVar(&rs.flags.Network, "network", "", "network (chain) name; overrides the configured default")
+	pf.StringVar(&rs.flags.RPC, "rpc", "", "RPC endpoint name; overrides the network's default endpoint for this call")
 	pf.StringVar(&rs.flags.Config, "config", "", "config file or directory (default: platform XDG path)")
 	pf.StringVar(&rs.flags.Keystore, "keystore", "", "keystore directory (default: platform data path)")
 	pf.StringVar(&rs.flags.StateDir, "state-dir", "", "mutable state directory (default: platform state path)")
@@ -61,6 +62,9 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newWalletCmd(ctx, rs),   // M1
 		newAccountCmd(ctx, rs),  // M1
 		newKeystoreCmd(ctx, rs), // M1
+		newNetworkCmd(ctx, rs),  // M2
+		newRpcCmd(ctx, rs),      // M2
+		newBalanceCmd(ctx, rs),  // M2
 	)
 
 	return root

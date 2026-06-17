@@ -85,6 +85,11 @@ var providerNames = map[string]bool{
 	"keys": true, "chain": true, "erc": true, "ens": true,
 	"policy": true, "policyseal": true, "journal": true, "registry": true,
 	"config": true, "secret": true, "fsx": true, "ethunit": true, "abi": true,
+	// testchain (M2): the anvil integration harness (//go:build integration). It is
+	// a provider-class leaf used only by integration tests; registering it here
+	// keeps TestNoUnclassifiedInternalPackages from going red and governs its edges
+	// (testchain→chain is sanctioned below).
+	"testchain": true,
 }
 
 // frontendRoots are the package-path leaders (relative to internalPrefix) that mark a
@@ -142,9 +147,16 @@ var sanctionedProviderEdges = map[string]bool{
 	"erc→chain":         true,
 	"policy→policyseal": true,
 	"policy→abi":        true,
-	// {config,keys,journal,policy,registry} → fsx
+	// {config,keys,journal,policy,registry,chain} → fsx
+	// chain→fsx (M2): chain.Dial perms-checks the mTLS client-key file with
+	// fsx.CheckPerms before loading it (§7.5 — the key file is permission-checked
+	// like a passphrase file). This is the only provider→provider edge M2 adds.
 	"config→fsx": true, "keys→fsx": true, "journal→fsx": true,
-	"policy→fsx": true, "registry→fsx": true,
+	"policy→fsx": true, "registry→fsx": true, "chain→fsx": true,
+	// testchain→chain (M2): the anvil integration harness dials the real adapter
+	// and implements chaintest.Harness; both targets classify as the "chain"
+	// provider. Test-only (//go:build integration).
+	"testchain→chain": true,
 	// {config,keys,journal,policy,registry} → secret
 	"config→secret": true, "keys→secret": true, "journal→secret": true,
 	"policy→secret": true, "registry→secret": true,

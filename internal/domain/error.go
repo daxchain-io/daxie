@@ -181,6 +181,11 @@ var codeExit = map[string]ExitCode{
 	// 6 — NETWORK
 	"rpc.unreachable": ExitNetwork,
 
+	// rpc.unsupported is the Subscribe-on-HTTP sentinel (§2.6). It is not a
+	// user-facing M2 path, but mapping it under usage (exit 2) keeps it honest if it
+	// ever surfaces to a command, rather than falling through to internal.
+	"rpc.unsupported": ExitUsage,
+
 	// 7 — REVERTED
 	"tx.reverted": ExitReverted,
 
