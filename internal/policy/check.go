@@ -52,6 +52,19 @@ type Check struct {
 	TypedPrimary   string // the EIP-712 primaryType
 	TypedVerifying string // domain.verifyingContract (lowercase 0x) the message declared
 	TypedChainID   int64  // domain.chainId the message declared (0 if absent)
+
+	// ── M10 unknown-calldata path (stage-5b; ONLY ContractSend's classify sets these
+	// for a selector ClassifyCalldata returned ok=false). A RECOGNIZED spend-equivalent
+	// does NOT use these — it rides KindApprove/KindTransfer through stages 3-8 exactly
+	// like the typed path (the M10 crux: the generic and typed paths are indistinguishable
+	// to Evaluate). These drive the §4.3 stage-5b deny-by-default unknown-calldata gate:
+	// once a policy is active, an unrecognized selector to a non-allowlisted, non-opted-in
+	// contract is refused (policy.denied.contract_call), with the per-(network,contract,
+	// selector) ContractsAllowed[] registry as the only opt-in. --value still folds into
+	// SpendWei (recognition-independent) so the ETH gates apply a fortiori. ──
+	UnknownCalldata bool           // the calldata's selector matched no §4.2 recognizer
+	ContractAddr    common.Address // the tx To (the contract) — the stage-5b allowlist subject
+	Selector        string         // the leading 4-byte selector "0x…" (for the triple + Data)
 }
 
 // Kind is the §4.2 request kind. There is NO opaque KindContractCall: arbitrary

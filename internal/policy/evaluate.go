@@ -108,6 +108,16 @@ func Evaluate(p Policy, req Check, spentWindowWei *big.Int, now time.Time) Decis
 		vs = append(vs, v)
 	}
 
+	// ── Stage 5b: unknown-calldata gate (contract send whose selector
+	// ClassifyCalldata returned ok=false; service set Check.UnknownCalldata=true). The
+	// calldata twin of the stage-5 typed-data gate: once a policy is active, deny by
+	// default unless the contract address is allowlisted or the (network, contract,
+	// selector) triple is in ContractsAllowed[]. The ETH gates (3a/3b/3c on the contract
+	// address as destination, 6/7/8 on --value + gas) accumulate independently above. ──
+	if v, ok := stageUnknownCalldata(p, lim, req); ok {
+		vs = append(vs, v)
+	}
+
 	// ── Stage 6: per-tx ETH limit + unlimited-ack ceremony ──
 	if v, ok := stagePerTx(lim, req, kind); ok {
 		vs = append(vs, v)
@@ -222,6 +232,20 @@ func matchPin(p PinEntry, dest, toInput string) bool {
 // keystore). Uniform across transfers/NFT sends/approvals/permits (§4.3 stage 3b).
 func stageAllowlist(p Policy, lim resolvedLimits, req Check) (Violation, bool) {
 	if !lim.allowlistEnabled {
+		return Violation{}, false
+	}
+	// Unknown-calldata contract sends carry Dest=the contract address and are governed
+	// by the stage-5b gate (stageUnknownCalldata), which decides the contract destination
+	// via its OWN allowlist/triple checks (contractAddrAllowlisted/contractAllowMatch). If
+	// stage-3b also fired on the contract-as-destination here, it would mask stage-5b's
+	// `contracts_allowed[]` triple-allow path (§4.3 stage 5b: "refused unless the contract
+	// address is allowlisted OR the (network, contract, selector) triple is in
+	// contracts_allowed[]") whenever allowlist_enabled is on — making the per-triple opt-in
+	// dead. The deny-by-default for an unknown selector still binds: stage-5b refuses it
+	// unless allowlisted-or-opted-in. Recognized spend-equivalent sends do NOT set
+	// UnknownCalldata — their Dest is the decoded spender/recipient and stage-3b gates it
+	// exactly like the typed path (the crux), so this skip never relaxes a recognized op.
+	if req.UnknownCalldata {
 		return Violation{}, false
 	}
 	dest := lowerHex(req.Dest)
@@ -416,6 +440,105 @@ func typedAllowMatch(allowed []TypedAllow, req Check) bool {
 			continue
 		}
 		if a.PrimaryType != req.TypedPrimary {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// ── Stage 5b: unknown-calldata gate (contract send, unrecognized selector) ────
+
+// stageUnknownCalldata is the §4.3 stage-5b gate: ONLY for a `contract send` whose
+// selector ClassifyCalldata returned ok=false (service marks Check.UnknownCalldata=true,
+// sets Check.ContractAddr + Check.Selector, and sets Dest=contract so stage-3b also gates
+// the contract address as the destination). The calldata twin of stageTypedData's
+// unknown-typed-data deny-by-default.
+//
+// Once a policy is active (the impure Evaluate only runs this pure pipeline for a present
+// policy — exactly the "once a policy is active" condition), DENY BY DEFAULT
+// (policy.denied.contract_call) UNLESS:
+//
+//	(a) the contract ADDRESS is allowlisted (an allowlisted contract is trusted to
+//	    receive arbitrary calldata — the same trust the operator extended by pinning it),
+//	    OR
+//	(b) the exact (network, contract, selector) triple is in ContractsAllowed[] (the
+//	    operator opted that one call in under the admin passphrase).
+//
+// There is NO tokens_no_allowlist_ok-style blanket override: the ack is per-triple,
+// because one wrong arbitrary call's blast radius is unbounded (§4.3 stage 5b). The ETH
+// gates (3a denylist, 3b/3c allowlist on the contract address, 6/7/8 on --value + gas)
+// run a fortiori as separate stages and accumulate independently.
+//
+// reason: "unknown_selector" when the selector is short/undecodable (Selector=="0x"),
+// "not_allowed" when a known-but-unrecognized selector to a non-allowlisted, non-opted-in
+// contract (§4.9 Data).
+func stageUnknownCalldata(p Policy, lim resolvedLimits, req Check) (Violation, bool) {
+	if !req.UnknownCalldata {
+		return Violation{}, false
+	}
+	// (a) an allowlisted contract address is trusted to receive arbitrary calldata. This
+	// check is independent of allowlist_enabled: an EXPLICITLY pinned contract is trusted
+	// even when the per-network allowlist gate is off (the operator pinned it on purpose).
+	if contractAddrAllowlisted(p, lim, req) {
+		return Violation{}, false
+	}
+	// (b) the exact (network, contract, selector) triple was opted in under the admin pass.
+	if contractAllowMatch(p.ContractsAllowed, req.Network, req.ContractAddr, req.Selector) {
+		return Violation{}, false
+	}
+	reason := "not_allowed"
+	if req.Selector == "" || req.Selector == "0x" {
+		reason = "unknown_selector"
+	}
+	return Violation{
+		Code:   codeContractCall,
+		Reason: "this contract call's calldata is not a recognized spend-equivalent and the contract is neither allowlisted nor opted in for this selector; refusing (contract_call.unknown). Allowlist the contract, or admit the (network, contract, selector) triple with `daxie policy contract allow`",
+		Data: map[string]any{
+			"reason":   reason,
+			"network":  req.Network,
+			"contract": lowerHex(req.ContractAddr),
+			"selector": req.Selector,
+		},
+	}, true
+}
+
+// contractAddrAllowlisted reports whether the contract address (req.ContractAddr) is a
+// pinned allowlist entry, OR an own account when include_self is set against the sealed
+// self snapshot. Unlike stageAllowlist this does NOT gate on allowlist_enabled: an
+// explicitly-pinned contract is trusted to receive arbitrary calldata regardless of the
+// per-network allowlist switch (an opt-in by the operator). The denylist still applies
+// independently via stage-3a (a denylisted contract is decided there, higher precedence).
+func contractAddrAllowlisted(p Policy, lim resolvedLimits, req Check) bool {
+	contract := lowerHex(req.ContractAddr)
+	if contract == "" {
+		return false
+	}
+	if lim.includeSelf && inSelf(p, contract) {
+		return true
+	}
+	for _, a := range p.Allowlist {
+		if strings.EqualFold(a.Address, contract) {
+			return true
+		}
+	}
+	return false
+}
+
+// contractAllowMatch reports an exact (network case-insensitive, contract
+// case-insensitive, selector exact) triple match in ContractsAllowed[]. selector is the
+// normalized 0x 4-byte hex string (10 chars) both the admin mutator and service produce.
+func contractAllowMatch(list []ContractAllow, network string, contract common.Address, selector string) bool {
+	c := lowerHex(contract)
+	sel := strings.ToLower(strings.TrimSpace(selector))
+	for _, a := range list {
+		if !strings.EqualFold(a.Network, network) {
+			continue
+		}
+		if !strings.EqualFold(a.Contract, c) {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(a.Selector)) != sel {
 			continue
 		}
 		return true

@@ -327,7 +327,7 @@ func TestTokensOnDiskSchema(t *testing.T) {
 	}
 	s := string(b)
 	for _, want := range []string{
-		`"v": 1`,
+		`"v": 2`, // M10: the version bumps 1→2 for the additive contracts[] key (§7.8)
 		`"network": "mainnet"`,
 		`"alias": "mytoken"`,
 		`"kind": "erc20"`,
@@ -335,6 +335,7 @@ func TestTokensOnDiskSchema(t *testing.T) {
 		`"symbol": "MTK"`,
 		`"collections": []`,
 		`"nft_aliases": []`,
+		`"contracts": []`, // M10: the contracts[] namespace is always emitted (empty here)
 		`"address": "0x1111111111111111111111111111111111111111"`, // lowercase
 	} {
 		if !contains(s, want) {
@@ -366,14 +367,14 @@ func TestTokensCorruptFileIsStateError(t *testing.T) {
 	}
 }
 
-// TestNewerVersionRefused confirms a file with v greater than this binary forward-reads
-// (tokensMaxReadableVersion) is refused (fail closed), while an additive v=2 (M10's
-// contracts[] bump) is forward-read.
+// TestNewerVersionRefused confirms a file with v greater than this binary supports
+// (tokensMaxReadableVersion) is refused (fail closed), while v=2 (M10's native
+// contracts[] schema) reads normally.
 func TestNewerVersionRefused(t *testing.T) {
 	ctx := context.Background()
 	tk, dir := newTokens(t)
 
-	// v=2 (M10 additive) forward-reads: tokens still resolve, contracts ignored.
+	// v=2 (M10 native) reads: tokens still resolve alongside the contracts namespace.
 	v2 := `{"v":2,"network":"mainnet","tokens":[{"alias":"mytoken","address":"0x1111111111111111111111111111111111111111","kind":"erc20","decimals":18,"symbol":"MTK"}],"collections":[],"nft_aliases":[],"contracts":[{"alias":"x","address":"0x2222222222222222222222222222222222222222","abi":[]}]}`
 	if err := os.WriteFile(filepath.Join(dir, "mainnet.json"), []byte(v2), 0o600); err != nil {
 		t.Fatalf("seed v2: %v", err)

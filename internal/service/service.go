@@ -150,9 +150,20 @@ type Service struct {
 	// pin capture, and the `ens resolve|reverse` use cases all resolve through it.
 	ens ens.Resolver
 
-	// Later milestones add: contracts *registry.* (the M10 contract registry). It is
-	// absent before its milestone by design. (M5's erc + tokens + discovery, M6's nfts,
-	// and M7's ens are declared above.)
+	// contracts is the M10 per-network contract registry (§7.8 contracts[]): the
+	// alias↔address↔inline-ABI store, co-located in the SAME registry/<network>.json
+	// envelope + flock as tokens/nfts (the v2 schema bump). Opened lazily on the registry
+	// dir (a missing per-network file reads as empty — there are NO bundled contracts).
+	// The §5.11 read paths + the §5.1 contract send resolve aliases REGISTRY-ONLY through
+	// it (the anti-spoofing wall): a stored ABI lie can never change the destination or
+	// the classified spender (classification reads the calldata bytes, not the ABI).
+	//
+	// The ABI codec the contract use cases drive (internal/abi) is the stateless
+	// dabi.Codec — like erc.Ops it carries NO state, so the contract.go use cases
+	// construct a zero value per call (dabi.Codec{}) rather than holding a field. It is
+	// the SAME ClassifySelector set policy.ClassifyCalldata consumes (the §4.2
+	// one-shared-selector-set invariant; the contract decode display uses it too).
+	contracts *registry.Contracts
 }
 
 // Open composes the service from resolved options.
@@ -257,6 +268,13 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The M10 contract registry: same registryDir + flock + envelope as tokens/nfts
+	// (the v2 schema bump), lazy. It shares the per-network file with tokens/nfts (one
+	// atomic unit), so OpenContracts also provisions nothing on disk.
+	contractReg, err := registry.OpenContracts(paths.RegistryDir)
+	if err != nil {
+		return nil, err
+	}
 
 	sleep := opts.Sleep
 	if sleep == nil {
@@ -288,7 +306,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		// backed *Tokens (registry + bundled majors). Service holds the interface so a
 		// future indexer impl swaps in here with zero call-site change.
 		discovery: tokenReg,
-		nfts:      nftReg, // M6: the per-network NFT registry (collections + nft_aliases)
+		nfts:      nftReg,      // M6: the per-network NFT registry (collections + nft_aliases)
+		contracts: contractReg, // M10: the per-network contract registry (contracts[] v2)
 		sleep:     sleep,
 		// The §2.8 chain provider. It is stateless (dial per call) so Open dials
 		// NOTHING here — it only captures the merged config + the per-process

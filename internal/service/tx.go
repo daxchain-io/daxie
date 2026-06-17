@@ -83,6 +83,19 @@ type Intent struct {
 	nonce    *uint64 // forced --nonce (RBF pins it), else nil (derived under lock)
 	replaces *string // RBF cross-link (speedup/cancel), else nil
 
+	// isContractSend marks an M10 `daxie contract send` Intent: authorize/dryRun run
+	// ClassifyCalldata at stage 2 (the §4.2 calldata recognizer) over (to, data, value)
+	// to REWRITE the Check into the same KindApprove/KindTransfer spend-equivalent the
+	// typed path emits (a recognized selector), or to flip the Check into the §4.3
+	// stage-5b unknown-calldata gate (an unrecognized selector). A plain ETH/token/NFT
+	// send leaves this false — its Check is already built from the typed Intent fields.
+	isContractSend bool
+	// classification is the transient §4.2 verdict classifyContractSend computes for a
+	// contract send (recognized → approve/transfer + spender/recipient/unlimited;
+	// unrecognized → "unknown" + selector). dryRun surfaces it on the result so an agent
+	// pre-flights how its calldata was read. nil until classifyContractSend runs.
+	classification *domain.Classification
+
 	source   string // "cli" | "mcp"
 	unlocker domain.Unlocker
 }
@@ -223,6 +236,86 @@ func (in *Intent) policyCheckKind() string {
 		return "approve"
 	}
 	return string(in.kind)
+}
+
+// classifyContractSend is the §4.2/§4.3 stage-2 calldata wiring for an M10
+// `contract send` (the load-bearing security piece). It runs ONLY for an
+// isContractSend Intent; every other path returns immediately leaving the typed Check
+// untouched.
+//
+//   - RECOGNIZED selector (ClassifyCalldata ok==true): it REWRITES the Check into the
+//     SAME spend-equivalent the typed path emits — Kind/KindEnum (approve/transfer),
+//     Dest = the DECODED spender/recipient (from the calldata BYTES, never the contract
+//     or the ABI claim), Token/Asset = lower(contract), TokenAmt, Unlimited
+//     (re-derived from the encoded amount/sentinel). It does NOT touch Check.Acked —
+//     the base Check already set Acked = in.acked (the DELIBERATE --unlimited ack, NOT the
+//     bare --yes), so an unlimited approve carried as raw calldata fires the IDENTICAL
+//     unlimited-ack ceremony the typed path does (§4.2 line 1561). The decoded spender is a raw address
+//     (calldata carries no ENS provenance), so ToSrc stays SourceRawAddress. --value
+//     already rode SpendWei in the base Check (recognition-independent, §4.3 stage 2);
+//     the classified Check's SpendWei carries the same value the policy layer set.
+//   - UNRECOGNIZED selector (ok==false): it flips the Check into the §4.3 stage-5b
+//     unknown-calldata gate — UnknownCalldata=true, ContractAddr=the contract,
+//     Selector=the 4-byte hex, and Dest=the contract (so stage-3b ALSO gates the
+//     contract address as the destination). --value stays in SpendWei so the ETH gates
+//     apply a fortiori.
+//
+// In both branches it records the verdict on in.classification so a --dry-run can
+// surface classified_as/spender/unlimited/selector to a pre-flighting agent.
+func (s *Service) classifyContractSend(in *Intent, check *policy.Check) {
+	if !in.isContractSend {
+		return
+	}
+	value := in.value
+	checks, ok := s.policy.ClassifyCalldata(in.to, in.data, value)
+	if ok && len(checks) > 0 {
+		// v1 ClassifyCalldata emits a single primary entry for the contract-send path
+		// (the Permit2-batch fan-out is structural — checks[1:] are reserved for a future
+		// multi-Check loop; the primary entry is the one this single-tx send carries).
+		cc := checks[0]
+		check.Kind = cc.Kind
+		check.KindEnum = cc.KindEnum
+		check.Dest = cc.Dest
+		check.Token = cc.Token
+		check.Asset = cc.Asset
+		check.TokenAmt = cc.TokenAmt
+		check.Unlimited = cc.Unlimited
+		// The decoded spender/recipient is a raw address from the calldata — no ENS/
+		// contact provenance, so a literal-address Check (no pin-drift) is correct.
+		check.ToSrc = policy.SourceRawAddress
+		check.ToInput = ""
+		check.ENSName = ""
+		check.ENSResolved = common.Address{}
+		// --value already in SpendWei (the base Check set it). Keep it.
+		cls := &domain.Classification{
+			ClassifiedAs: cc.Kind,
+			Unlimited:    cc.Unlimited,
+			Contract:     strings.ToLower(in.to.Hex()),
+		}
+		switch cc.KindEnum {
+		case policy.KindApprove:
+			cls.Spender = strings.ToLower(cc.Dest.Hex())
+		case policy.KindTransfer:
+			cls.Recipient = strings.ToLower(cc.Dest.Hex())
+		}
+		in.classification = cls
+		return
+	}
+
+	// Unrecognized: stage-5b deny-by-default gate. The allowlist subject is the contract
+	// address itself (Dest=contract), so stage-3b also evaluates it as the destination.
+	check.UnknownCalldata = true
+	check.ContractAddr = in.to
+	check.Selector = policy.SelectorHex(in.data)
+	check.Dest = in.to
+	check.ToSrc = policy.SourceRawAddress
+	// Kind stays "contract" (the journal.Kind string) → effectiveKind() → KindTransfer,
+	// so the ETH per-tx/daily/gas gates apply a fortiori on --value + gas.
+	in.classification = &domain.Classification{
+		ClassifiedAs: "unknown",
+		Selector:     check.Selector,
+		Contract:     strings.ToLower(in.to.Hex()),
+	}
 }
 
 // authorized is what the kernel returns (§2.7): a signed, journaled,
@@ -501,6 +594,13 @@ func (s *Service) authorize(ctx context.Context, p domain.Principal, in Intent, 
 		_ = lease.Release()
 		return authorized{}, err
 	}
+	// §4.2/§4.3 stage-2 (M10): for a `contract send`, run ClassifyCalldata over the raw
+	// calldata. A recognized ERC-20/721/1155/Permit selector REWRITES the Check into the
+	// SAME KindApprove/KindTransfer spend-equivalent the typed path emits (the M10 crux —
+	// Evaluate cannot tell the generic path from the typed one); an unrecognized selector
+	// flips the Check into the stage-5b unknown-calldata gate. --value already rode
+	// SpendWei in the base Check (recognition-independent).
+	s.classifyContractSend(&in, &check)
 	reservation, err := s.policy.Reserve(ctx, check)
 	if err != nil {
 		_ = lease.Release()
@@ -896,6 +996,11 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 	if err := s.applyDestProvenance(&check, in); err != nil {
 		return domain.TxResult{}, err
 	}
+	// §4.2/§4.3 stage-2 (M10): a `contract send --dry-run` runs the SAME ClassifyCalldata
+	// the real send does, so the classification verdict (classified_as/spender/unlimited
+	// for recognized; unknown + the stage-5b gate for unrecognized) is reflected in the
+	// dry-run result and an agent pre-flights without burning a signing attempt.
+	s.classifyContractSend(in, &check)
 	dec, err := s.policy.Evaluate(ctx, check)
 	if err != nil {
 		return domain.TxResult{}, err
@@ -923,6 +1028,9 @@ func (s *Service) dryRun(ctx context.Context, in *Intent) (domain.TxResult, erro
 		Gas:       in.gas.result(),
 		Status:    domain.TxStatusPending,
 		DryRun:    true,
+		// M10: a `contract send --dry-run` surfaces the calldata classification verdict
+		// so an agent pre-flights whether its bytes are a recognized spend-equivalent.
+		Classification: in.classification,
 	}
 	return res, nil
 }

@@ -1,0 +1,33 @@
+# Golden calldata vectors — the EXACT output of foundry's `cast calldata` for the
+# same method + args, so the abi.Codec encoder is validated against foundry, not
+# merely round-tripped (design §2.9; the erc/ golden convention).
+#
+# Format: <method-signature> | <space-separated cast args> | <0x calldata>
+# Lines beginning with '#' and blank lines are ignored.
+#
+# The scalar/static vectors AND the dynamic-shape vectors (dynamic arrays + a tuple)
+# are ALL cast-derived: dynamic arrays/tuples carry head/tail offset words, exactly where
+# a hand-rolled or mis-wired encoder most often diverges from foundry, so they must be
+# pinned against cast — NOT merely round-tripped through the same codec (design §2.9).
+#
+# Regenerate (and re-paste) with foundry — args are SINGLE whitespace-free tokens so the
+# golden reader's strings.Fields splitter keeps each literal intact:
+#   cast calldata "stake(uint256)" 1000000000000000000
+#   cast calldata "transfer(address,uint256)" 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000000
+#   cast calldata "approve(address,uint256)" 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+#   cast calldata "setFlags(bool[])" "[true,false,true]"
+#   cast calldata "batch(address[])" "[0x70997970C51812dc3A010C7d01b50e0d17dc79C8,0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC]"
+#   cast calldata "amounts(uint256[])" "[1,2,3]"
+#   cast calldata "submit((address,uint256))" "(0x70997970C51812dc3A010C7d01b50e0d17dc79C8,42)"
+
+stake(uint256) | 1000000000000000000 | 0xa694fc3a0000000000000000000000000000000000000000000000000de0b6b3a7640000
+transfer(address,uint256) | 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000000 | 0xa9059cbb00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c800000000000000000000000000000000000000000000000000000000000f4240
+approve(address,uint256) | 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff | 0x095ea7b30000000000000000000000003c44cdddb6a900fa2b585dd299e03d12fa4293bcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+# dynamic arrays (offset + length + elements) — head/tail layout pinned against cast
+setFlags(bool[]) | [true,false,true] | 0xda46ec3300000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+batch(address[]) | [0x70997970C51812dc3A010C7d01b50e0d17dc79C8,0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC] | 0x99a4bb620000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c80000000000000000000000003c44cdddb6a900fa2b585dd299e03d12fa4293bc
+amounts(uint256[]) | [1,2,3] | 0x5a0677b500000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003
+
+# a tuple (static struct, encoded inline)
+submit((address,uint256)) | (0x70997970C51812dc3A010C7d01b50e0d17dc79C8,42) | 0x91ee1c7e00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8000000000000000000000000000000000000000000000000000000000000002a

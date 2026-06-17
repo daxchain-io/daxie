@@ -157,6 +157,15 @@ type PolicyMutateResult struct {
 	TypedContract    string `json:"typed_contract,omitempty"`
 	TypedPrimaryType string `json:"typed_primary_type,omitempty"`
 	TypedRemoved     bool   `json:"typed_removed,omitempty"`
+
+	// M10 contract allow/remove ECHO (cli-spec §`policy contract allow/remove`): the
+	// (network, contract, selector) triple admitted to / removed from the §4.3 stage-5b
+	// unknown-calldata registry, so the operator confirms WHAT was sealed. Empty for the
+	// non-contract mutations.
+	ContractNetwork  string `json:"contract_network,omitempty"`
+	ContractAddr     string `json:"contract_addr,omitempty"`
+	ContractSelector string `json:"contract_selector,omitempty"`
+	ContractRemoved  bool   `json:"contract_removed,omitempty"`
 }
 
 // PolicyCheckResult is the `policy check` what-if verdict (§4.7): the full Decision,
@@ -507,6 +516,65 @@ func (s *Service) PolicyTypedAllow(_ context.Context, _ domain.Principal, req Po
 func (s *Service) PolicyTypedRemove(ctx context.Context, p domain.Principal, req PolicyTypedAllowRequest, in AdminInput) (PolicyMutateResult, error) {
 	req.Remove = true
 	return s.PolicyTypedAllow(ctx, p, req, in)
+}
+
+// PolicyContractAllowRequest is the `policy contract allow/remove` request: it manages
+// the §4.3 stage-5b per-(network,contract,selector) unknown-calldata allow registry
+// (Policy.ContractsAllowed[]). An entry opts a triple into the deny-by-default stage-5b
+// gate so a `contract send` whose calldata ClassifyCalldata could NOT classify passes
+// for that exact selector. Admin-passphrase gated — admitting an arbitrary (contract,
+// selector) widens what a hijacked agent may sign (the §4.3 "per-triple ack only" rule:
+// there is no blanket override, one wrong arbitrary call's blast radius is unbounded).
+type PolicyContractAllowRequest struct {
+	Network   string
+	Contract  string
+	Selector  string
+	Label     string
+	Remove    bool
+	AnchorOut string
+}
+
+// PolicyContractAllow admits (or removes) a stage-5b unknown-calldata triple under the
+// admin passphrase (`policy contract allow`). It mirrors PolicyTypedAllow exactly:
+// acquireAdmin → build the policy.ContractAllowEntry (RefreshSelf=selfSnapshot,
+// WrittenBy=version) → s.policy.ContractAllow → finishMutation (the engine wrote
+// policy.json + returned the anchor; service writes the config-class anchor SECOND).
+func (s *Service) PolicyContractAllow(_ context.Context, _ domain.Principal, req PolicyContractAllowRequest, in AdminInput) (PolicyMutateResult, error) {
+	adminPass, _, err := s.acquireAdmin(in)
+	if err != nil {
+		return PolicyMutateResult{}, err
+	}
+	defer adminPass.Zero()
+	entry := policy.ContractAllowEntry{
+		Network:     strings.TrimSpace(req.Network),
+		Contract:    strings.ToLower(strings.TrimSpace(req.Contract)),
+		Selector:    strings.ToLower(strings.TrimSpace(req.Selector)),
+		Label:       req.Label,
+		Remove:      req.Remove,
+		RefreshSelf: s.selfSnapshot(),
+		WrittenBy:   version.Version,
+	}
+	anchor, serr := s.policy.ContractAllow(adminPass, entry)
+	if serr != nil {
+		return PolicyMutateResult{}, serr
+	}
+	res, ferr := s.finishMutation(anchor, req.AnchorOut, false)
+	if ferr != nil {
+		return PolicyMutateResult{}, ferr
+	}
+	res.ContractNetwork = entry.Network
+	res.ContractAddr = entry.Contract
+	res.ContractSelector = entry.Selector
+	res.ContractRemoved = req.Remove
+	return res, nil
+}
+
+// PolicyContractRemove drops a stage-5b allow entry by triple (`policy contract remove`).
+// It is PolicyContractAllow with Remove=true (the engine matches the triple; a missing
+// entry is a no-op remove, the same shape as `policy typed remove`).
+func (s *Service) PolicyContractRemove(ctx context.Context, p domain.Principal, req PolicyContractAllowRequest, in AdminInput) (PolicyMutateResult, error) {
+	req.Remove = true
+	return s.PolicyContractAllow(ctx, p, req, in)
 }
 
 // PolicyCountersRelease releases a stuck reservation by id under the admin

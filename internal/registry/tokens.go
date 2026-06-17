@@ -12,19 +12,19 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// tokensVersion is the per-network registry schema version (§7.8). v=1 carries the
-// tokens/collections/nft_aliases keys (M5 fungible + M6 NFT shapes). The version
-// bumps to 2 in M10 for the additive contracts[] key (§7.8); M5 writes v=1, and a
-// future v=2 file forward-reads here (a missing contracts/key is just empty). A file
-// whose v is HIGHER than this binary supports is refused (fail closed), with one
-// exception: M10's additive v=2 is a known forward-compatible bump, so we accept it
-// and ignore the contracts[] key (M5 does not own it). See load().
-const tokensVersion = 1
+// tokensVersion is the per-network registry schema version (§7.8). v=1 carried the
+// tokens/collections/nft_aliases keys (M5 fungible + M6 NFT shapes); M10 BUMPS it to 2
+// for the additive contracts[] key (§7.8). A v=1 file (no contracts key) is
+// forward-migrated by treating a missing contracts as empty (load() leaves it nil; save()
+// stamps v=2 + emits an empty array). Both a Tokens mutation and a Contracts mutation
+// rewrite the whole v=2 envelope preserving each other's keys (load reads all keys; save
+// emits all keys) — no data loss across the namespaces sharing the per-network file.
+const tokensVersion = 2
 
-// tokensMaxReadableVersion is the highest on-disk v this binary will read. M5
-// understands v=1 and forward-reads M10's additive v=2 (it ignores the contracts[]
-// key it does not own). A v greater than this is refused (a newer binary wrote a
-// breaking schema) — state.corrupt, fail closed.
+// tokensMaxReadableVersion is the highest on-disk v this binary will read. It equals
+// tokensVersion (this binary reads what it writes). A v greater than this is refused (a
+// newer binary wrote a breaking schema) — state.corrupt, fail closed. A v=1 file written
+// by an older M5/M6 binary forward-reads here (its missing contracts key is empty).
 const tokensMaxReadableVersion = 2
 
 // KindERC20 is the fungible kind string stored on a Token (§7.8 "kind":"erc20").
@@ -80,18 +80,19 @@ type NFTAlias struct {
 }
 
 // tokensFile is the on-disk envelope for registry/<network>.json (§7.8). The
-// collections/nft_aliases arrays are always present (M6 shape) but empty in M5. The
-// M10 contracts[] key is NOT modeled here (M5 does not own it); load() preserves a
-// v=2 file's bytes only by NOT clobbering it — but since M5 mutations rewrite the
-// whole envelope, M5 only ever WRITES v=1 files, and a v=2 file written by M10 is
-// read forward (contracts ignored) but never re-saved by an M5 binary (M5 never
-// mutates a v=2 file without dropping contracts — guarded in save()).
+// collections/nft_aliases arrays are always present (M6 shape). The contracts[] array is
+// the M10 contract-registry namespace co-located in the same per-network file (§7.8) —
+// modeled here so EVERY mutation (a Tokens add, an NFT add, a Contract add) round-trips
+// ALL keys: load reads them all, save emits them all, so two namespaces sharing the file
+// never drop each other's data. A v=1 file (no contracts key) reads with Contracts==nil
+// (forward-migration §7.10); save() normalizes nil to an empty array.
 type tokensFile struct {
 	V           int          `json:"v"`
 	Network     string       `json:"network"`
 	Tokens      []Token      `json:"tokens"`
 	Collections []Collection `json:"collections"`
 	NFTAliases  []NFTAlias   `json:"nft_aliases"`
+	Contracts   []Contract   `json:"contracts"`
 }
 
 // ResolvedToken is a registry entry plus its provenance: Bundled is true when it came
@@ -373,18 +374,10 @@ func (t *Tokens) load(network string) (*tokensFile, error) {
 
 // save atomically writes registry/<network>.json (0600) under the registry lock (the
 // caller holds it). It MkdirAll's the registry dir first (lazy, §7.3). A read-only
-// mount maps to the state-class read-only sibling of config.read_only (exit 10). The
-// collections/nft_aliases arrays are always emitted (M6 shape, empty in M5).
-//
-// M5 never owns or writes the M10 contracts[] key. If load() read a v=2 file (M10
-// wrote it), an M5 mutation would drop contracts[] on rewrite — so save() refuses to
-// write a downgrade over a v=2 file: it always stamps tokensVersion (v=1) and the
-// caller's mutation only reached here from a v<=1 file path. (A v=2 file means an M10
-// binary is in use; M5 mutations against it are out of scope and the corrupt-on-read
-// version gate above keeps M5 from silently dropping M10 data — load() accepts v=2
-// for READS only, and save always writes v=1, but it never overwrites a v=2 file
-// because Add/Rename/Remove on a v=2 file is an M10-only flow. M5 binaries operate on
-// v=1 files exclusively.)
+// mount maps to the state-class read-only sibling of config.read_only (exit 10). It
+// always stamps v=2 (tokensVersion) and emits ALL keys (tokens/collections/nft_aliases/
+// contracts) — load() read them all, so a mutation in any one namespace preserves the
+// others verbatim (the §7.8 co-located-namespaces invariant; no data loss).
 func (t *Tokens) save(network string, f *tokensFile) error {
 	f.V = tokensVersion
 	f.Network = network
@@ -398,6 +391,9 @@ func (t *Tokens) save(network string, f *tokensFile) error {
 	}
 	if f.NFTAliases == nil {
 		f.NFTAliases = []NFTAlias{}
+	}
+	if f.Contracts == nil {
+		f.Contracts = []Contract{}
 	}
 	if err := fsx.MkdirAll(t.registryDir, dirMode); err != nil {
 		if fsx.IsReadOnly(err) {

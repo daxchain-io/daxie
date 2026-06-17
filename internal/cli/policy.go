@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"io"
+	"strings"
 
 	"github.com/daxchain-io/daxie/internal/cli/render"
 	"github.com/daxchain-io/daxie/internal/domain"
@@ -51,7 +52,8 @@ func newPolicyCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newPolicyPinCmd(ctx, rs),
 		newPolicyChangeAdminCmd(ctx, rs),
 		newPolicyResetCmd(ctx, rs),
-		newPolicyTypedCmd(ctx, rs), // M9
+		newPolicyTypedCmd(ctx, rs),    // M9
+		newPolicyContractCmd(ctx, rs), // M10
 	)
 	return cmd
 }
@@ -176,6 +178,127 @@ func runPolicyTyped(ctx context.Context, cmd *cobra.Command, rs *rootState, af a
 	label2 := "policy typed allow"
 	if remove {
 		label2 = "policy typed remove"
+	}
+	return renderMutate(cmd, rs, res, label2)
+}
+
+// ── contract allow | remove (M10) ─────────────────────────────────────────────
+
+// newPolicyContractCmd is the `daxie policy contract` parent: the §4.3 stage-5b per-
+// (network,contract,selector) unknown-calldata allow registry (Policy.ContractsAllowed[]).
+// It opts a triple into the deny-by-default stage-5b gate so a `contract send` whose
+// calldata ClassifyCalldata could NOT classify passes for that EXACT selector. Both
+// mutations require the ADMIN passphrase: admitting an arbitrary (contract, selector)
+// widens what a hijacked agent may sign, so opening it is an admin act. There is NO
+// blanket override (the §4.3 per-triple-ack rule — one wrong arbitrary call's blast
+// radius is unbounded).
+func newPolicyContractCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "contract",
+		Short: "Manage the per-(network,contract,selector) unknown-calldata allow registry (admin passphrase)",
+		Long: "Allow / remove a specific (network, contract, selector) triple so a `contract\n" +
+			"send` whose calldata is NOT a recognized spend-equivalent passes the stage-5b\n" +
+			"deny-by-default gate for that exact selector. Recognized ERC-20/721/1155/permit\n" +
+			"calldata does NOT need an entry — it is gated by the spend-equivalent path. The\n" +
+			"ack is PER-TRIPLE; there is no blanket override.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	}
+	cmd.AddCommand(
+		newPolicyContractAllowCmd(ctx, rs),
+		newPolicyContractRemoveCmd(ctx, rs),
+	)
+	return cmd
+}
+
+func newPolicyContractAllowCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	var af adminPassphraseFlags
+	var selector, netw, label, anOut string
+	cmd := &cobra.Command{
+		Use:   "allow <contract> --selector 0x.. [--network N] [--label note]",
+		Short: "Allow an unknown-calldata (network, contract, selector) triple (admin passphrase)",
+		Long: "Admit a (network, contract, selector) triple into the stage-5b unknown-calldata\n" +
+			"registry. A `contract send` to that contract whose leading 4-byte selector matches\n" +
+			"--selector then passes the deny-by-default gate. The selector is the function\n" +
+			"selector (the first 4 bytes of keccak(signature), e.g. 0xa694fc3a for stake(uint256)).",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPolicyContract(ctx, cmd, rs, af, args[0], selector, netw, label, anOut, false)
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&selector, "selector", "", "the 4-byte function selector (0x.., required)")
+	fl.StringVar(&netw, "network", "", "the network the contract lives on (default: the active network)")
+	fl.StringVar(&label, "label", "", "an operator note stored with the entry")
+	fl.StringVar(&anOut, "anchor-out", "", "write the updated anchor to this path (read-only config)")
+	af.bind(cmd)
+	return cmd
+}
+
+func newPolicyContractRemoveCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	var af adminPassphraseFlags
+	var selector, netw, anOut string
+	cmd := &cobra.Command{
+		Use:   "remove <contract> --selector 0x.. [--network N]",
+		Short: "Remove an unknown-calldata triple from the allow registry (admin passphrase)",
+		Long: "Remove a previously-allowed (network, contract, selector) triple. After removal a\n" +
+			"`contract send` matching it is once again refused by the stage-5b deny-by-default\n" +
+			"gate (once a policy is active).",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPolicyContract(ctx, cmd, rs, af, args[0], selector, netw, "", anOut, true)
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&selector, "selector", "", "the 4-byte function selector (0x.., required)")
+	fl.StringVar(&netw, "network", "", "the network the contract lives on (default: the active network)")
+	fl.StringVar(&anOut, "anchor-out", "", "write the updated anchor to this path (read-only config)")
+	af.bind(cmd)
+	return cmd
+}
+
+// runPolicyContract is the shared body for `policy contract allow|remove`: validate the
+// required flags, default the network to the active one, open the service, and call the
+// admin-gated use case. The selector validity is enforced in core (the engine's
+// validateContractAllow); the cli surfaces the obvious missing-flag usage errors early.
+func runPolicyContract(ctx context.Context, cmd *cobra.Command, rs *rootState, af adminPassphraseFlags, contract, selector, netw, label, anOut string, remove bool) error {
+	if strings.TrimSpace(contract) == "" {
+		return domain.New(domain.CodeUsage+".bad_contract_allow", "a contract (0x address) is required")
+	}
+	if strings.TrimSpace(selector) == "" {
+		return domain.New(domain.CodeUsage+".bad_contract_allow", "--selector is required (the 4-byte function selector, e.g. 0xa694fc3a)")
+	}
+	network := netw
+	if network == "" {
+		network = rs.flags.Network
+	}
+	svc, closeFn, err := openService(ctx, rs)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+
+	req := service.PolicyContractAllowRequest{
+		Network:   network,
+		Contract:  contract,
+		Selector:  selector,
+		Label:     label,
+		Remove:    remove,
+		AnchorOut: anOut,
+	}
+	in := service.AdminInput{Stdin: af.stdin, File: af.file}
+	var res service.PolicyMutateResult
+	if remove {
+		res, err = svc.PolicyContractRemove(cmd.Context(), domain.LocalCLI(), req, in)
+	} else {
+		res, err = svc.PolicyContractAllow(cmd.Context(), domain.LocalCLI(), req, in)
+	}
+	if err != nil {
+		return err
+	}
+	label2 := "policy contract allow"
+	if remove {
+		label2 = "policy contract remove"
 	}
 	return renderMutate(cmd, rs, res, label2)
 }

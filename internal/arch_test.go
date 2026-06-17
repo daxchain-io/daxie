@@ -494,6 +494,92 @@ func TestM9SignFilesOnCorrectSide(t *testing.T) {
 	}
 }
 
+// TestM10ContractFilesOnCorrectSide pins the M10 `daxie contract` files explicitly onto
+// the right side of the import matrix (design §2.2/§2.3c), per-FILE rather than per-
+// package, so a future edit that, say, makes the contract command reach a provider (the
+// chain client, the abi codec, the policy engine) to "just classify one selector" goes
+// red here even if the package as a whole still has a legitimate provider import via
+// another file. The §4.2 ClassifyCalldata + the §5.1 authorize kernel + the §5.11 read
+// paths MUST stay in the core; the command stays a thin host.
+//
+//   - cli/contract.go + cli/render/contract.go are FRONTEND files: they may import
+//     service + domain + render + cobra (+ ethunit for output) — never a provider (not
+//     abi, not chain, not policy, not registry). The geth common/abi value packages are
+//     external (stdlib-class to the matrix), so a frontend reading a value type for a
+//     flag check is fine; reaching internal/abi or internal/policy is not.
+//   - service/contract.go is a CORE file: it may import domain + providers (abi/chain/
+//     registry/policy/journal/ethunit/…) — never a frontend (cli/render).
+//
+// It ALSO pins the §2.2 "abi is a pure leaf" claim: every internal/abi/*.go file may
+// import internal/domain (errors) ONLY — NO other internal package. A future edit that
+// reaches chain/policy/registry from abi (which would let the codec do I/O or know about
+// policy) goes red here. The package-level TestImportMatrix already classifies abi as a
+// provider and validates policy→abi is the only inbound provider edge; this adds the
+// stricter per-file leaf-purity + the per-file frontend/core split.
+func TestM10ContractFilesOnCorrectSide(t *testing.T) {
+	root := moduleRoot(t)
+	cases := []struct {
+		file       string // module-relative path
+		wantLayer  layer
+		bannedDesc string
+	}{
+		{"internal/cli/contract.go", layerFrontend, "a provider (the contract command is a thin host; ClassifyCalldata + the authorize kernel live in the core)"},
+		{"internal/cli/render/contract.go", layerFrontend, "a provider (the contract renderers format only; they import domain, never a provider)"},
+		{"internal/service/contract.go", layerCore, "a frontend (the contract use cases are core; they never import cli/render)"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(root, c.file)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("M10 file %s is missing: %v", c.file, err)
+			continue
+		}
+		for _, imp := range fileImports(t, path) {
+			to := classify(imp)
+			switch c.wantLayer {
+			case layerFrontend:
+				if to == layerProvider && providerOf(imp) != "ethunit" {
+					t.Errorf("M10 FRONTEND VIOLATION: %s imports provider %s; it must reach %s", c.file, imp, c.bannedDesc)
+				}
+				if to == layerHost {
+					t.Errorf("M10 FRONTEND VIOLATION: %s imports the host %s", c.file, imp)
+				}
+			case layerCore:
+				if to == layerFrontend {
+					t.Errorf("M10 CORE VIOLATION: %s imports frontend %s; it must not reach %s", c.file, imp, c.bannedDesc)
+				}
+			}
+		}
+	}
+
+	// internal/abi leaf-purity: every abi source file imports internal/domain ONLY (of
+	// the module's own internal packages). The codec is a pure provider leaf (geth value
+	// packages + stdlib + domain errors); reaching any other internal package would let
+	// it do I/O or know about policy/chain — the §2.2 "abi is a pure leaf" invariant.
+	abiDir := filepath.Join(root, "internal/abi")
+	if _, err := os.Stat(abiDir); err != nil {
+		t.Errorf("M10: internal/abi is missing: %v", err)
+		return
+	}
+	entries, err := os.ReadDir(abiDir)
+	if err != nil {
+		t.Fatalf("reading internal/abi: %v", err)
+	}
+	for _, e := range entries {
+		fn := e.Name()
+		if e.IsDir() || !strings.HasSuffix(fn, ".go") || strings.HasSuffix(fn, "_test.go") {
+			continue
+		}
+		for _, imp := range fileImports(t, filepath.Join(abiDir, fn)) {
+			if !strings.HasPrefix(imp, internalPrefix) {
+				continue // stdlib / geth / external — fine for a leaf
+			}
+			if imp != modulePrefix+"/internal/domain" {
+				t.Errorf("ABI LEAF-PURITY VIOLATION: internal/abi/%s imports %s; the abi codec is a pure leaf and may import internal/domain ONLY (§2.2)", fn, imp)
+			}
+		}
+	}
+}
+
 // fileImports parses one Go file and returns its direct import paths (unquoted).
 func fileImports(t *testing.T, path string) []string {
 	t.Helper()

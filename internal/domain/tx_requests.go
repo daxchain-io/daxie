@@ -96,6 +96,26 @@ type TxResult struct {
 	Replaced string `json:"replaced,omitempty"`
 	// DryRun marks a check-only result (no broadcast); the verdict passed.
 	DryRun bool `json:"dry_run,omitempty"`
+	// Classification is the M10 `contract send --dry-run` calldata classification
+	// verdict (§4.3): how ClassifyCalldata read the raw calldata, so an agent
+	// pre-flights whether its bytes are treated as a spend-equivalent before signing.
+	// nil for every non-contract-send path (and omitted from the wire).
+	Classification *Classification `json:"classification,omitempty"`
+}
+
+// Classification is the M10 contract-send calldata classification verdict surfaced on
+// a --dry-run TxResult (§4.3 "classified_as"/"spender"/"unlimited"). ClassifiedAs is
+// "approve"|"transfer"|"unknown"; Spender/Recipient is the DECODED policy subject (the
+// calldata bytes, never the contract or the ABI claim); Unlimited is the sentinel
+// match; Selector is the leading 4-byte selector (set on the unknown path for the
+// stage-5b triple). No float anywhere (§2.5).
+type Classification struct {
+	ClassifiedAs string `json:"classified_as"`       // "approve" | "transfer" | "unknown"
+	Spender      string `json:"spender,omitempty"`   // decoded spender (approve)
+	Recipient    string `json:"recipient,omitempty"` // decoded recipient (transfer)
+	Unlimited    bool   `json:"unlimited,omitempty"` // sentinel/unbounded
+	Selector     string `json:"selector,omitempty"`  // unknown path: the 4-byte selector
+	Contract     string `json:"contract,omitempty"`  // the contract (tx To)
 }
 
 // TxStatus is the §5.2 lifecycle status on a TxResult. timeout is deliberately
