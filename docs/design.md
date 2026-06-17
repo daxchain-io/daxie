@@ -4102,7 +4102,8 @@ checksum:
   extra_files: [{ glob: scripts/install.sh }]   # so the signed checksums.txt covers install.sh
 signs:
   - cmd: cosign
-    args: [sign-blob, "--output-signature=${signature}", "--output-certificate=${certificate}", "--yes", "${artifact}"]
+    signature: "${artifact}.sigstore.json"
+    args: [sign-blob, "--bundle=${signature}", "${artifact}", "--yes"]
     artifacts: checksum                         # keyless cosign over checksums.txt
 sboms: [{ artifacts: archive }]
 dockers_v2:                                      # one multi-platform entry (NOT the deprecated triple)

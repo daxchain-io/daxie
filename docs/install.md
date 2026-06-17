@@ -82,17 +82,15 @@ cosign signature that protects the binaries protects the installer.
 ```sh
 REL=https://github.com/daxchain-io/daxie/releases/latest/download
 
-# 1. Download the installer, the signed checksum manifest, and its cosign artifacts.
+# 1. Download the installer, the signed checksum manifest, and its Sigstore bundle.
 curl -fsSLO "$REL/install.sh"
 curl -fsSLO "$REL/checksums.txt"
-curl -fsSLO "$REL/checksums.txt.sig"
-curl -fsSLO "$REL/checksums.txt.pem"
+curl -fsSLO "$REL/checksums.txt.sigstore.json"
 
 # 2. Verify checksums.txt with cosign keyless (the identity is pinned to THIS repo's
 #    release workflow at a tag ref — see "Cosign signature verification" below).
 cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature   checksums.txt.sig \
+  --bundle checksums.txt.sigstore.json \
   --certificate-identity-regexp '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
