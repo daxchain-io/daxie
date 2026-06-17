@@ -73,6 +73,7 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newContactsCmd(ctx, rs), // M3
 		newPolicyCmd(ctx, rs),   // M4
 		newTokenCmd(ctx, rs),    // M5
+		newNFTCmd(ctx, rs),      // M6
 	)
 
 	return root

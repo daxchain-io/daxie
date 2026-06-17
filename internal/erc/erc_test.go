@@ -208,10 +208,32 @@ func TestSelectorsMatchSignatures(t *testing.T) {
 		{sigOwnerOf, "6352211e"},
 		{sigSafeTransferFrom721, "42842e0e"},
 		{sigSafeTransferFrom1155, "f242432a"},
+		{sigSupportsInterface, "01ffc9a7"},
+		{sigBalanceOf1155, "00fdd58e"},
 	}
 	for _, c := range cases {
 		if got := hex.EncodeToString(selector(c.sig)); got != c.want {
 			t.Errorf("selector(%q) = 0x%s, want 0x%s", c.sig, got, c.want)
+		}
+	}
+}
+
+// TestERC165InterfaceIDs pins the ERC-165 interface IDs to their well-known
+// canonical values (EIP-721 0x80ac58cd, EIP-1155 0xd9b67a26), so a typo in the
+// pinned [4]byte literals cannot pass silently. These are the bytes
+// supportsInterface() is queried with at `nft add` to select the standard.
+func TestERC165InterfaceIDs(t *testing.T) {
+	cases := []struct {
+		name string
+		id   [4]byte
+		want string
+	}{
+		{"ERC-721", iface721, "80ac58cd"},
+		{"ERC-1155", iface1155, "d9b67a26"},
+	}
+	for _, c := range cases {
+		if got := hex.EncodeToString(c.id[:]); got != c.want {
+			t.Errorf("%s interface id = 0x%s, want 0x%s", c.name, got, c.want)
 		}
 	}
 }

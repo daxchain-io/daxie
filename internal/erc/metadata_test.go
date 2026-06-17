@@ -126,6 +126,51 @@ func TestSymbolEmptyIsNotERC20(t *testing.T) {
 	}
 }
 
+func TestNameString(t *testing.T) {
+	c := callReturning(abiString("CryptoPunks"))
+	got, err := Ops{}.Name(context.Background(), c, tokenAddr)
+	if err != nil {
+		t.Fatalf("Name error: %v", err)
+	}
+	if got != "CryptoPunks" {
+		t.Fatalf("Name = %q, want CryptoPunks", got)
+	}
+
+	// The eth_call must target the contract with the name() selector 0x06fdde03 —
+	// NOT symbol() (the NFT registry's default-alias source differs from tokens').
+	calls := c.CallsFor("CallContract")
+	if len(calls) != 1 {
+		t.Fatalf("CallContract calls = %d, want 1", len(calls))
+	}
+	msg := calls[0].Args[0].(ethereum.CallMsg)
+	if msg.To == nil || *msg.To != tokenAddr {
+		t.Errorf("CallMsg.To = %v, want %s", msg.To, tokenAddr)
+	}
+	if len(msg.Data) != 4 || string(msg.Data) != string(selector(sigName)) {
+		t.Errorf("CallMsg.Data = 0x%x, want name() selector 0x06fdde03", msg.Data)
+	}
+}
+
+func TestNameLegacyBytes32(t *testing.T) {
+	// A name() return packed as bytes32 (legacy shape) decodes like symbol().
+	c := callReturning(bytes32("Maker"))
+	got, err := Ops{}.Name(context.Background(), c, tokenAddr)
+	if err != nil {
+		t.Fatalf("Name(bytes32) error: %v", err)
+	}
+	if got != "Maker" {
+		t.Fatalf("Name(bytes32) = %q, want Maker", got)
+	}
+}
+
+func TestNameEmptyIsNotERC20(t *testing.T) {
+	c := callReturning(nil)
+	_, err := Ops{}.Name(context.Background(), c, tokenAddr)
+	if !errors.Is(err, ErrNotERC20) {
+		t.Fatalf("Name(empty) err = %v, want ErrNotERC20", err)
+	}
+}
+
 func TestBalanceOf(t *testing.T) {
 	c := callReturning(word32(big.NewInt(1_234_567)))
 	got, err := Ops{}.BalanceOf(context.Background(), c, tokenAddr, ownerAddr)

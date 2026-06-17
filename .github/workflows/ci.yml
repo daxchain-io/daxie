@@ -204,9 +204,16 @@ jobs:
         # internal/service/token_integration_test.go + internal/cli/token_integration_test.go
         # scenarios: token add → balance --token == on-chain → tx send --token →
         # approve/allowance/revoke → balance --all, plus the fail-closed-no-allowlist
-        # deny exit 3 and the policy-dest-is-the-recipient invariant). The `./...` +
+        # deny exit 3 and the policy-dest-is-the-recipient invariant), and M6's NFT
+        # surface against freshly-deployed test ERC-721/1155 collections
+        # (internal/testchain/erc721.go + erc1155.go deploy/mint + raw-RPC readers; the
+        # internal/service/nft_integration_test.go scenarios: nft add → ERC-165
+        # detection (721 vs 1155; non-NFT rejected) → nft send (721 ownerOf moves; 1155
+        # balanceOf moves --amount) → nft show, plus the fail-closed-no-allowlist NFT
+        # send deny exit 3 — ETH exempt, NFT NOT — and the policy-dest-is-the-recipient
+        # invariant). The `./...` +
         # `-tags integration` already compiles and runs every //go:build integration
-        # file, so the M3+M5 tests are covered without a new job; CGO=1 so -race is
+        # file, so the M3+M5+M6 tests are covered without a new job; CGO=1 so -race is
         # available on the one job that talks to a real EVM (shipped binaries stay
         # CGO_ENABLED=0).
         env:
@@ -312,3 +319,29 @@ jobs:
         run: |
           chmod +x docs/demos/m05.sh
           DAXIE="$PWD/daxie" docs/demos/m05.sh
+
+  demo-m06:
+    name: m06 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m06.sh unmodified
+        # The M6 NFT acceptance demo (§10.1 gate, v0.6.0): ERC-721 + ERC-1155.
+        # DRY: an unregistered collection alias ⇒ exit 10 ref.not_found (the
+        # anti-spoofing wall — NEVER an on-chain name() lookup); `nft send` without
+        # --to/--nft ⇒ exit 2. LIVE (anvil on PATH via foundry-toolchain): deploy a
+        # test ERC-721 + ERC-1155, mint, nft add (ERC-165 detection: 721 vs 1155
+        # stored; a non-NFT ⇒ exit 2 usage.not_nft), nft alias/aliases, nft send (721:
+        # ownerOf moves to the recipient; 1155 --amount 5: balanceOf moves), nft
+        # show/list, and a fail-closed-no-allowlist NFT send ⇒ exit 3
+        # policy.denied.no_allowlist (ETH exempt, NFT NOT; nothing signed).
+        run: |
+          chmod +x docs/demos/m06.sh
+          DAXIE="$PWD/daxie" docs/demos/m06.sh

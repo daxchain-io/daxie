@@ -132,11 +132,28 @@ func (in *Intent) tokenTag() string {
 	return ""
 }
 
-// isTokenOp reports whether this Intent is a token transfer or an approval (not a
-// plain ETH send). A token transfer carries non-empty calldata to the token
-// contract; an approval is policyKindApprove. A plain ETH send has neither.
+// isTokenOp reports whether this Intent is a token/NFT transfer or an approval
+// (not a plain ETH send). A token/NFT transfer carries non-empty calldata to the
+// asset contract under a recognized token-class kind; an approval is
+// policyKindApprove. A plain ETH send has neither.
+//
+// M6: an ERC-721/1155 NFT send is a token-class op (non-empty safeTransferFrom
+// calldata + kind erc721/1155-transfer), so checkAsset()/tokenTag() return the
+// COLLECTION contract (a non-"eth" Asset) and the §4.3 stage-3c fail-closed-no-
+// allowlist gate fires for it — "ETH exempt, NFT NOT" (design §4.3). A plain ETH
+// send is the only broadcasting path that stays Asset="eth".
 func (in *Intent) isTokenOp() bool {
-	return in.policyKind == policyKindApprove || (len(in.data) > 0 && in.kind == journal.KindERC20Transfer)
+	if in.policyKind == policyKindApprove {
+		return true
+	}
+	if len(in.data) == 0 {
+		return false
+	}
+	switch in.kind {
+	case journal.KindERC20Transfer, journal.KindERC721Transfer, journal.KindERC1155Transfer:
+		return true
+	}
+	return false
 }
 
 // policyCheckKind maps the Intent's policyKind to the policy.Check Kind string the

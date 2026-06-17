@@ -64,6 +64,29 @@ func (Ops) Symbol(ctx context.Context, cc chain.Client, token common.Address) (s
 	return s, nil
 }
 
+// Name reads name() (selector 0x06fdde03) and returns the DISPLAY name. Like
+// Symbol it handles BOTH the canonical ABI `string` return AND the legacy
+// `bytes32` return (early tokens that returned a fixed 32-byte name): a return of
+// exactly 32 bytes is treated as bytes32 (trailing NULs trimmed); otherwise it is
+// decoded as an ABI dynamic string. A revert / empty return is ErrNotERC20.
+//
+// SECURITY (§7.8): this value is for DISPLAY ONLY (and, for the NFT registry, the
+// default-alias source — see service.NFTAdd). It MUST NEVER be used to RESOLVE an
+// alias — name spoofing is free, so alias resolution is registry-only. The
+// default-alias derivation at `nft add` is a one-time write the user fully
+// overrides with --name; it is never the resolution path.
+func (Ops) Name(ctx context.Context, cc chain.Client, token common.Address) (string, error) {
+	out, err := callRead(ctx, cc, token, selector(sigName))
+	if err != nil {
+		return "", err
+	}
+	s, ok := decodeStringOrBytes32(out)
+	if !ok {
+		return "", ErrNotERC20
+	}
+	return s, nil
+}
+
 // BalanceOf reads ERC-20 balanceOf(address) (selector 0x70a08231) for owner and
 // decodes the uint256 base-unit balance. A revert / empty return is ErrNotERC20.
 func (Ops) BalanceOf(ctx context.Context, cc chain.Client, token, owner common.Address) (*big.Int, error) {

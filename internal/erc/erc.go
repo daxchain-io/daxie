@@ -59,8 +59,9 @@ const (
 	sigDecimals = "decimals()"
 	// sigSymbol is ERC-20 symbol() → selector 0x95d89b41.
 	sigSymbol = "symbol()"
-	// sigName is ERC-20 name() → selector 0x06fdde03 (read for kind-detection /
-	// display; not part of the M5 command surface but folded in for completeness).
+	// sigName is name() → selector 0x06fdde03. Backs Ops.Name (a DISPLAY read),
+	// which the M6 NFT registry uses as the default-alias source at `nft add`
+	// (overridable with --name; never the resolution path — §7.8 anti-spoofing).
 	sigName = "name()"
 	// sigOwnerOf is ERC-721 ownerOf(uint256) → selector 0x6352211e (M6 NFT read).
 	sigOwnerOf = "ownerOf(uint256)"
@@ -71,6 +72,27 @@ const (
 	// safeTransferFrom(address,address,uint256,uint256,bytes) → selector
 	// 0xf242432a (M6 NFT transfer).
 	sigSafeTransferFrom1155 = "safeTransferFrom(address,address,uint256,uint256,bytes)"
+	// sigSupportsInterface is ERC-165 supportsInterface(bytes4) → selector
+	// 0x01ffc9a7 (M6 kind detection at `nft add`). The DetectKind/SupportsInterface
+	// reads live in nft.go (same package, same Ops value receiver).
+	sigSupportsInterface = "supportsInterface(bytes4)"
+	// sigBalanceOf1155 is ERC-1155 balanceOf(address,uint256) → selector
+	// 0x00fdd58e (M6 NFT read). DISTINCT from the ERC-20 balanceOf(address)
+	// 0x70a08231 above (a second uint256 id arg and a different selector).
+	sigBalanceOf1155 = "balanceOf(address,uint256)"
+)
+
+// ERC-165 interface IDs (EIP-165 §"How interfaces are identified": the bytewise
+// XOR of an interface's function selectors). They are pinned as literal 4-byte
+// values AND re-asserted in the test against the well-known canonical IDs, so a
+// typo cannot pass silently. supportsInterface(id) reporting true selects the
+// token standard at `nft add` (the result is STORED — resolution thereafter is
+// registry-only, never a re-detection; the anti-spoofing wall).
+var (
+	// iface721 is the ERC-721 interface ID (EIP-721).
+	iface721 = [4]byte{0x80, 0xac, 0x58, 0xcd}
+	// iface1155 is the ERC-1155 interface ID (EIP-1155).
+	iface1155 = [4]byte{0xd9, 0xb6, 0x7a, 0x26}
 )
 
 // MaxUint256 is the unlimited-approval sentinel (2^256 - 1). An approve(spender,
@@ -124,6 +146,15 @@ func IsUnlimitedAmount(amount *big.Int) bool {
 // class) via the "usage" prefix rule in §5.7 — a caller-input error (the user
 // pointed at the wrong address), not a daxie bug.
 var ErrNotERC20 = domain.New("usage.not_erc20", "address is not an ERC-20 token (no decimals/symbol)")
+
+// ErrNotNFT is the typed "this address is not an ERC-721 / ERC-1155" error
+// DetectKind (nft.go) returns when ERC-165 supportsInterface reports neither the
+// 721 nor the 1155 interface (an EOA, a plain ERC-20, or a non-165 contract that
+// reverts/returns false). Like ErrNotERC20 it maps to exit 2 (usage class) via
+// the "usage" prefix — a caller-input error (the user pointed `nft add` at the
+// wrong address), not a daxie bug. A genuine transport error is NEVER relabeled
+// to this (it propagates so the §5.7 rpc.* taxonomy / retryable hint survive).
+var ErrNotNFT = domain.New("usage.not_nft", "address is not an ERC-721 or ERC-1155 contract (ERC-165 check failed)")
 
 // ── PURE calldata builders (no network) — §2.8 verbatim ──
 

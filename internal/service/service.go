@@ -124,6 +124,15 @@ type Service struct {
 	// answers the SAME interface from on-chain/index data with zero call-site change.
 	discovery registry.Discovery
 
+	// nfts is the M6 per-network NFT registry (§7.8): collection aliases +
+	// individual-NFT (collection#tokenId) aliases, co-located in the SAME
+	// registry/<network>.json envelope + flock as the tokens (one atomic unit). Opened
+	// lazily on the registry dir (a missing per-network file reads as empty — there are
+	// NO bundled NFT majors). The §2.8/§5.1 NFT send + show/list use cases resolve
+	// references registry-only through it (the anti-spoofing wall, applied to
+	// collections exactly like tokens).
+	nfts *registry.NFTs
+
 	// sleep is the injected ctx-aware scheduling seam (§2.3): the determinism guard
 	// bans the time.After/Sleep family as call expressions in this package, so the
 	// broadcast backoff + the §5.3 poll interval block through this instead. A nil
@@ -131,9 +140,9 @@ type Service struct {
 	// guard stays green. Production injects a real sleeper.
 	sleep func(ctx context.Context, d time.Duration) error
 
-	// Later milestones add: ens *ens.Resolver (M7); nfts/contracts *registry.*
-	// (NFT/contract registries are M6/M10). They are absent before their milestone
-	// by design. (M5's erc + tokens + discovery are declared above.)
+	// Later milestones add: ens *ens.Resolver (M7); contracts *registry.* (the M10
+	// contract registry). They are absent before their milestone by design. (M5's erc
+	// + tokens + discovery and M6's nfts are declared above.)
 }
 
 // Open composes the service from resolved options.
@@ -231,6 +240,13 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The M6 NFT registry: same registryDir + flock + envelope as tokens, lazy. It
+	// shares the per-network file with the tokens (one atomic unit), so OpenNFTs also
+	// provisions nothing on disk.
+	nftReg, err := registry.OpenNFTs(paths.RegistryDir)
+	if err != nil {
+		return nil, err
+	}
 
 	sleep := opts.Sleep
 	if sleep == nil {
@@ -261,6 +277,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		// backed *Tokens (registry + bundled majors). Service holds the interface so a
 		// future indexer impl swaps in here with zero call-site change.
 		discovery: tokenReg,
+		nfts:      nftReg, // M6: the per-network NFT registry (collections + nft_aliases)
 		sleep:     sleep,
 		// The §2.8 chain provider. It is stateless (dial per call) so Open dials
 		// NOTHING here — it only captures the merged config + the per-process
