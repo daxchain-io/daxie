@@ -1,20 +1,37 @@
 # .goreleaser.yml — Daxie (design §9.4).
 #
-# M0 GATE: `goreleaser build --snapshot --clean` produces all SIX target binaries
-# (darwin/linux/windows × amd64/arm64), CGO_ENABLED=0, with internal/version vars
-# injected via ldflags. `goreleaser check` is also green.
+# One config, two gates:
 #
-# The full release pipeline (cosign signing, SBOMs, OCI images, GitHub release,
-# Homebrew cask) is M12 — those stanzas are kept here COMMENTED so this file is the
-# complete eventual config and the snapshot build never attempts to sign. Uncomment
-# them at M12 (design §9.4 has the exact, paste-ready content).
+#   LOCAL (the M12 validation gate — no publish, no real signing):
+#     goreleaser check
+#     goreleaser release --snapshot --clean --skip=sbom,sign
+#       --snapshot implies --skip=publish,validate,announce; we additionally skip
+#       sbom (syft is not installed locally) and sign (cosign keyless needs GitHub
+#       OIDC, unavailable off-CI). docker IS available locally, so the snapshot run
+#       still BUILDS the multi-arch OCI image via Dockerfile.release.
+#
+#   CI (the real release — only when the operator arms it):
+#     goreleaser release --clean
+#       runs from .github/workflows/release.yml inside the `release` environment,
+#       gated on vars.DAXIE_RELEASE_ENABLED == 'true'. That job (and ONLY that job)
+#       holds contents/packages/id-token:write; the cask push runs in a separate
+#       job with HOMEBREW_TAP_GITHUB_TOKEN. There is no signing-key secret: signing
+#       is cosign KEYLESS via GitHub OIDC (design §9.3), so nothing here references
+#       a COSIGN_PRIVATE_KEY — by construction there is none to steal.
+#
+# Reproducible-build posture (design §9.1): CGO_ENABLED=0, -trimpath,
+# -buildvcs=false, commit-pinned mod_timestamp, {{ .CommitDate }} ldflag — no
+# wall-clock input enters the artifacts.
 version: 2
 
 project_name: daxie
 
 before:
   hooks:
-    # Non-mutating integrity checks only — NEVER `go mod tidy` in the release path.
+    # Non-mutating integrity checks only — NEVER `go mod tidy` in the release path
+    # (a release must not silently rewrite go.mod/go.sum). Single-module repo at the
+    # repo root, so unlike witwave there is no parent-dir LICENSE/install.sh copy
+    # dance and no embedded-chart sync.
     - go mod verify
     - go mod download
 
@@ -59,65 +76,179 @@ archives:
 checksum:
   name_template: checksums.txt
   algorithm: sha256
-  # M12: extra_files covers the signed install.sh once it exists.
-  # extra_files:
-  #   - glob: scripts/install.sh
+  # LOAD-BEARING (design §9.3): pull scripts/install.sh into checksums.txt so the
+  # cosign-signed checksum blob transitively covers the one script every `curl | sh`
+  # user executes. Without this, install.sh would be the only unsigned release asset.
+  extra_files:
+    - glob: scripts/install.sh
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# M12 RELEASE STANZAS — present for completeness, COMMENTED so the M0 snapshot
-# build never signs/uploads. Content matches design §9.4 verbatim; uncomment at M12.
-# ──────────────────────────────────────────────────────────────────────────────
-#
-# signs:
-#   - cmd: cosign
-#     args:
-#       - sign-blob
-#       - "--output-signature=${signature}"
-#       - "--output-certificate=${certificate}"
-#       - "--yes"
-#       - "${artifact}"
-#     artifacts: checksum # keyless cosign over checksums.txt
-#
-# sboms:
-#   - artifacts: archive
-#
-# dockers_v2:
-#   - id: daxie
-#     dockerfile: Dockerfile.release # COPY-only; goreleaser stages the prebuilt binary per $TARGETPLATFORM
-#     images:
-#       - ghcr.io/daxchain-io/daxie
-#     platforms:
-#       - linux/amd64
-#       - linux/arm64
-#     tags:
-#       - "{{ .Version }}"
-#       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
-#       - "{{ if not .Prerelease }}latest{{ end }}"
-#
-# docker_signs:
-#   - id: daxie-image
-#     cmd: cosign
-#     artifacts: "" # '' = dockers_v2 images
-#     args:
-#       - sign
-#       - "--yes"
-#       - "${artifact}"
-#
-# release:
-#   github:
-#     owner: daxchain-io
-#     name: daxie
-#   prerelease: auto
-#   mode: replace # ONLY for a release whose core artifacts never finished publishing
-#   extra_files:
-#     - glob: scripts/install.sh
-#
-# homebrew_casks:
-#   - name: daxie
-#     skip_upload: true # render-only; cask-publish pushes
-#     repository:
-#       owner: daxchain-io
-#       name: homebrew-daxie
+# cosign KEYLESS signing of checksums.txt via GitHub Actions OIDC (design §9.3).
+# A short-lived Fulcio cert binds the signature to THIS repo's release workflow at
+# THIS tag ref; the signature + cert land in the Rekor transparency log. No
+# long-lived key exists. Consumers verify checksums.txt with the exact-workflow
+# identity (the regexp is pinned in scripts/install.sh and docs/install.md, not
+# here, since the signing side doesn't constrain the verifying identity):
+#   cosign verify-blob \
+#     --certificate-identity-regexp \
+#       '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate daxie_<tag>_checksums.txt.pem \
+#     --signature  daxie_<tag>_checksums.txt.sig \
+#     checksums.txt
+# Skipped locally with `--skip=sign` (no OIDC off-CI).
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "--yes"
+      - "${artifact}"
+    artifacts: checksum # keyless cosign over checksums.txt only
+
+# syft SBOM per archive. CI-only: syft is not installed locally, so the local gate
+# runs with `--skip=sbom`. The stanza stays so CI emits an SBOM for every archive.
+sboms:
+  - artifacts: archive
+
+# ONE multi-platform OCI entry on the dockers_v2 schema (the v3-default successor —
+# NOT the deprecated dockers:/docker_manifests: triple, design §9.1). goreleaser
+# stages the prebuilt per-platform binary at the build-context root and builds
+# Dockerfile.release once per --platform.
+dockers_v2:
+  - id: daxie
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/daxchain-io/daxie
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    # Populate the OCI provenance ARGs the Dockerfile bakes into image LABELs.
+    # {{ .Date }} here is the goreleaser run timestamp (image-creation time), which
+    # is the correct meaning for org.opencontainers.image.created (build provenance),
+    # distinct from the reproducible {{ .CommitDate }} stamped into the binary.
+    build_args:
+      VERSION: "{{ .Version }}"
+      COMMIT: "{{ .ShortCommit }}"
+      DATE: "{{ .Date }}"
+    tags:
+      - "{{ .Version }}"
+      # Floating tags move on STABLE releases only — a beta/rc ({{ .Prerelease }}
+      # non-empty) can never repoint :X.Y or :latest under a running deployment
+      # (design §9.2). Agents pin exact versions or digests regardless.
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+
+# cosign KEYLESS signing of the OCI image manifests by digest (shared top-level
+# stanza, design §9.1/§9.3). artifacts: "" targets dockers_v2 images.
+docker_signs:
+  - id: daxie-image
+    cmd: cosign
+    artifacts: "" # '' = dockers_v2 images
+    args:
+      - sign
+      - "--yes"
+      - "${artifact}"
+
+release:
+  # disable is a TEMPLATED string defaulting to "false": the goreleaser job (and
+  # every local snapshot) creates/uploads the GitHub Release normally. The
+  # cask-publish job — which re-runs goreleaser on a fresh runner AFTER the
+  # release is already public + Rekor-logged + SLSA-attested — sets
+  # DAXIE_RELEASE_DISABLE=true so its run NEVER touches the GitHub Release. That
+  # is what lets cask-publish hold only `contents: read`: with the release pipe
+  # disabled and `--skip=docker,sbom,sign,announce`, the cask push is the run's
+  # ONLY remote side effect, so it cannot delete/recreate (mode: replace) or
+  # re-upload to the existing release — exactly the trust smell §9.5 warns against.
+  disable: '{{ envOrDefault "DAXIE_RELEASE_DISABLE" "false" }}'
+  github:
+    owner: daxchain-io
+    name: daxie
+  # Any dash-suffixed tag (v1.0.0-rc.1, vX.Y.Z-beta.N) is marked a GitHub
+  # prerelease, so /releases/latest never returns it — the mechanical stable/beta
+  # channel split (design §9.2).
+  prerelease: auto
+  # mode: replace is for a release whose CORE artifacts never finished publishing
+  # (re-run the same tag to complete it). Once a release's artifacts are public +
+  # Rekor-logged, every fix is a new patch tag — mutating a signed, logged release
+  # is a trust smell (design §9, fail-forward).
+  mode: replace
+  # Ship install.sh as a release asset so
+  # https://github.com/daxchain-io/daxie/releases/latest/download/install.sh always
+  # resolves to the script matching the latest stable release. Repo root is the
+  # module root, so this is a plain workdir-local glob (no parent-dir workaround).
+  extra_files:
+    - glob: scripts/install.sh
+
+# Homebrew distribution via homebrew_casks (NOT the deprecated brews: block).
+# Casks are macOS-only; go install / curl | sh / the GitHub release archives /
+# the OCI image cover Linux and Windows.
+homebrew_casks:
+  - name: daxie
+    ids:
+      - daxie
+    binaries:
+      - daxie
+    # skip_upload is a TEMPLATED string, NOT a static bool, so one config serves
+    # two jobs (goreleaser v2 honors a templated skip_upload; a static `true` here
+    # would make the cask render-only in EVERY run — the tap would never receive
+    # it). It defaults to "true" (render-only): the goreleaser job — and every
+    # local `goreleaser release --snapshot` — computes dist/homebrew/Casks/daxie.rb
+    # but does NOT push it. The dedicated, stable-only `cask-publish` job in
+    # release.yml sets DAXIE_CASK_SKIP_UPLOAD=false to flip this to a real
+    # cross-repo push, so a tap-PAT failure fails ONLY that job and never forces a
+    # rebuild. goreleaser treats the rendered string truthy iff it equals "true".
+    skip_upload: '{{ envOrDefault "DAXIE_CASK_SKIP_UPLOAD" "true" }}'
+    # Cross-repo push needs HOMEBREW_TAP_GITHUB_TOKEN (a fine-grained PAT with
+    # Contents:Read-and-Write on daxchain-io/homebrew-daxie); the source repo's
+    # default GITHUB_TOKEN cannot push across repos. goreleaser v2 dropped the v1
+    # auto-detection, so the token MUST be wired explicitly via repository.token.
+    repository:
+      owner: daxchain-io
+      name: homebrew-daxie
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    # directory defaults to "Casks" — DO NOT override to "Formula" (the legacy
+    # path retired with the brews: block).
+    #
+    # Explicit download URL so the cask pipe is SELF-CONTAINED — it does NOT depend
+    # on goreleaser's GitHub-release block being enabled. That is load-bearing for
+    # the cask-publish job: that job re-runs goreleaser with DAXIE_RELEASE_DISABLE=true
+    # (so it can NEVER re-touch / replace the already-published, Rekor-logged,
+    # SLSA-attested release), and goreleaser otherwise refuses the default cask
+    # url_template when the release block is disabled ("release is disabled, cannot
+    # use default url_template"). The rendered URL is byte-identical to the default
+    # (releases/download/<tag>/<archive>) — the goreleaser job uploads these assets;
+    # the cask just points at them. {{ .Tag }} is the v-prefixed tag; {{ .ArtifactName }}
+    # is the per-arch archive filename.
+    url:
+      template: "https://github.com/daxchain-io/daxie/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: https://github.com/daxchain-io/daxie
+    description: The Ethereum wallet for AI — agent-first CLI + MCP server
+    hooks:
+      post:
+        # Strip the macOS quarantine xattr Gatekeeper applies to downloaded
+        # binaries; without it the first `daxie` run hits the "developer cannot be
+        # verified" dialog. Trust comes from the cosign/OIDC chain (see
+        # docs/security.md); the quarantine bit is a Finder annotation, not Apple
+        # notarization.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/daxie"]
+          end
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch

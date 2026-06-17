@@ -1,0 +1,64 @@
+# Example Docker Compose for Daxie (v1, stdio MCP transport).
+#
+# Runs the Daxie wallet container non-root with a read-only root filesystem, the four
+# state classes mounted by durability/writability, and the keystore passphrase via a
+# Docker secret. The admin passphrase is DELIBERATELY ABSENT — policy administration is
+# an out-of-band operator act (see docs/deploy/policy-k8s.md).
+#
+# v1 MCP is stdio: an agent harness typically launches `daxie mcp serve` as a
+# subprocess. This file shows the wallet container holding durable state; the standalone
+# network-service pattern arrives with the v1.1 HTTP transport + the Helm chart.
+#
+# Pin the image by DIGEST and cosign-verify it before deploying (see docs/install.md):
+#   image: ghcr.io/daxchain-io/daxie@sha256:<digest>
+
+services:
+  daxie:
+    image: ghcr.io/daxchain-io/daxie:1.0.0 # prefer a @sha256:<digest> pin in production
+    # The image ENTRYPOINT is /usr/bin/daxie; override the command for your transport.
+    # v1 stdio MCP is normally launched by the agent harness; `version` here is a
+    # liveness/smoke command. Replace with your serving invocation as appropriate.
+    command: ["version"]
+
+    # --- runtime hardening ---
+    user: "65532:65532" # non-root (distroless nonroot user)
+    read_only: true # read-only root filesystem
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      # Path wiring (the image bakes in no DAXIE_* defaults).
+      DAXIE_CONFIG: /etc/daxie
+      DAXIE_KEYSTORE: /var/lib/daxie/keystore
+      DAXIE_STATE_DIR: /var/lib/daxie/state
+      DAXIE_CACHE_DIR: /var/cache/daxie
+      # Keystore passphrase via a FILE (a Docker secret) — never DAXIE_PASSPHRASE.
+      DAXIE_PASSPHRASE_FILE: /run/secrets/daxie_pass
+      # NOTE: DAXIE_ADMIN_PASSPHRASE* is intentionally NOT set here.
+
+    volumes:
+      # config: read-only (config.toml + policy-anchor.json — the policy trust root).
+      - ./config:/etc/daxie:ro
+      # keystore: read-only at runtime (key material).
+      - daxie-keystore:/var/lib/daxie/keystore:ro
+      # state: durable, read-write (journal, nonces, sealed policy.json, spend counters).
+      - daxie-state:/var/lib/daxie/state
+
+    tmpfs:
+      # cache: the only ephemeral writable area (disposable; reconstructible from chain).
+      - /var/cache/daxie
+
+    secrets:
+      - daxie_pass
+
+    restart: unless-stopped
+
+secrets:
+  daxie_pass:
+    file: ./secrets/daxie-pass # a >=128-bit keystore passphrase, one trailing newline OK
+
+volumes:
+  daxie-keystore: {} # back this up: it holds key material
+  daxie-state: {} # MUST persist: spend counters live here (a wipe re-opens the daily window)

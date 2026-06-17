@@ -1,0 +1,105 @@
+# The Daxie pod: non-root, read-only root filesystem, dropped capabilities, with the
+# four state classes mounted by durability/writability.
+#
+# v1 MCP is stdio, so this Deployment is illustrative of the hardened runtime + the
+# four-mount pattern (here it runs `mcp serve`; an agent harness on the same pod is the
+# stdio client). The standalone network-service shape arrives with the v1.1 HTTP
+# transport + the Helm chart.
+#
+# Single replica = the v1 single-writer-per-account rule. Pin the image by @sha256
+# digest and cosign-verify it before rollout (see ../install.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: daxie
+  labels:
+    app.kubernetes.io/name: daxie
+spec:
+  replicas: 1 # one writer per account (v1 nonce safety)
+  strategy:
+    type: Recreate # never two pods sharing the state PVC at once
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: daxie
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: daxie
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532 # the non-root uid must be able to write the state PVC
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: daxie
+          image: ghcr.io/daxchain-io/daxie:1.0.0 # prefer @sha256:<digest> in production
+          args: ["mcp", "serve"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # Path wiring (the image bakes in no DAXIE_* defaults).
+            - name: DAXIE_CONFIG
+              value: /etc/daxie
+            - name: DAXIE_KEYSTORE
+              value: /var/lib/daxie/keystore
+            - name: DAXIE_STATE_DIR
+              value: /var/lib/daxie/state
+            - name: DAXIE_CACHE_DIR
+              value: /var/cache/daxie
+            # Keystore passphrase via a FILE (never DAXIE_PASSPHRASE, never a flag).
+            - name: DAXIE_PASSPHRASE_FILE
+              value: /run/secrets/daxie/passphrase
+            # RPC provider secret resolved from a Secret-backed env, referenced as
+            # ${env:INFURA_PROJECT_ID} in config.toml.
+            - name: INFURA_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: daxie-rpc
+                  key: infura-project-id
+                  optional: true
+            # NOTE: no DAXIE_ADMIN_PASSPHRASE* — the admin secret never enters this pod.
+          volumeMounts:
+            - name: config # config class: read-only ConfigMap (config.toml + anchor)
+              mountPath: /etc/daxie
+              readOnly: true
+            - name: keystore # keystore class: read-only Secret
+              mountPath: /var/lib/daxie/keystore
+              readOnly: true
+            - name: passphrase # keystore passphrase file
+              mountPath: /run/secrets/daxie
+              readOnly: true
+            - name: state # state class: durable PVC (read-write)
+              mountPath: /var/lib/daxie/state
+            - name: cache # cache class: emptyDir (disposable)
+              mountPath: /var/cache/daxie
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: daxie-config
+        - name: keystore
+          secret:
+            secretName: daxie-keystore
+        - name: passphrase
+          secret:
+            secretName: daxie-passphrase
+            items:
+              - key: passphrase
+                path: passphrase
+        - name: state
+          persistentVolumeClaim:
+            claimName: daxie-state
+        - name: cache
+          emptyDir: {}

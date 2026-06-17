@@ -1,23 +1,59 @@
 # Dockerfile.release — COPY-only distroless image for the Daxie binary (design §9.4).
 #
-# goreleaser stages the prebuilt, CGO-free binary per $TARGETPLATFORM; this file only
-# copies it. The image is built at M12 (dockers_v2 stanza in .goreleaser.yml); it is
-# present now so the release file set is complete.
+# goreleaser dockers_v2 stages the prebuilt, CGO-free binary under
+# $TARGETOS/$TARGETARCH/ in the build context and builds this file once per
+# --platform; the multi-arch manifest is assembled and (in CI) cosign-signed by
+# digest via the top-level docker_signs stanza. This file only COPYs — it never
+# compiles, fetches, or runs a package manager, so there is no build-time network or
+# toolchain in the supply chain.
 #
-# distroless/static (not scratch): Daxie's only outbound traffic is HTTPS JSON-RPC and
-# scratch carries no CA roots. Non-root uid 65532. Pinned by digest so the supply chain
-# is reproducible (design §8/§9: supply-chain integrity is a feature).
-#
-# Digest below is a placeholder to be pinned at M12 against the then-current
-# gcr.io/distroless/static-debian12:nonroot. Build/sign happen at M12 only.
-FROM gcr.io/distroless/static-debian12:nonroot
+# Base: gcr.io/distroless/static-debian12:nonroot, NOT scratch. Daxie's only outbound
+# traffic is HTTPS JSON-RPC and scratch carries no CA roots; distroless/static ships
+# the roots, /etc/passwd for the nonroot user, and tzdata, and nothing else (no shell,
+# no package manager, no busybox) — so an attacker who lands RCE in this image has no
+# interactive tooling to pivot with (design §8 T7/A11, supply-chain integrity is a
+# feature). Pinned by DIGEST (the multi-arch index digest, which resolves correctly
+# for both linux/amd64 and linux/arm64) so the base is reproducible and a moved
+# upstream tag cannot silently change what we ship. Bump via dependabot/renovate.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
 
-# goreleaser dockers_v2 places the per-platform binary at the build context root.
-COPY daxie /usr/bin/daxie
+# OCI provenance labels (design §8 A11/T7): tie the image back to its source, version,
+# and license so `docker inspect` / registry UIs / scanners can trace it. goreleaser
+# substitutes the build args at release time.
+ARG VERSION=dev
+ARG COMMIT=none
+ARG DATE=unknown
+LABEL org.opencontainers.image.title="daxie" \
+      org.opencontainers.image.description="The Ethereum wallet for AI — agent-first CLI + MCP server" \
+      org.opencontainers.image.vendor="daxchain-io" \
+      org.opencontainers.image.source="https://github.com/daxchain-io/daxie" \
+      org.opencontainers.image.url="https://github.com/daxchain-io/daxie" \
+      org.opencontainers.image.documentation="https://github.com/daxchain-io/daxie/blob/main/README.md" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${DATE}" \
+      org.opencontainers.image.base.name="gcr.io/distroless/static-debian12:nonroot"
 
+# goreleaser dockers_v2 builds once per --platform and lays the per-platform binary
+# out under $TARGETOS/$TARGETARCH/ in the build context (NOT at the context root —
+# unlike the deprecated dockers: stanza). TARGETOS/TARGETARCH are provided
+# automatically by buildx for each platform, so this one COPY resolves correctly for
+# both linux/amd64 and linux/arm64.
+ARG TARGETOS
+ARG TARGETARCH
+COPY ${TARGETOS}/${TARGETARCH}/daxie /usr/bin/daxie
+
+# Run as the distroless nonroot user (uid:gid 65532:65532). The image holds NO
+# secrets and writes nothing at the default paths: the four §7a state classes
+# (config, keystore, state, cache) are mounted by the deploy manifests, which is why
+# this image sets no DAXIE_* env defaults — keeping the path-wiring story in one place
+# (docs/deploy/). With those mounts the container runs read-only-rootfs cleanly
+# (readOnlyRootFilesystem / `--read-only`): nothing outside the declared mounts is
+# written.
 USER 65532:65532
 
-# Bare `docker run` prints help instead of hanging on empty stdin.
-# v1.1 flips this to ["mcp","serve","--transport","http"].
+# A bare `docker run` prints help instead of hanging on empty stdin. v1.1 flips this
+# to ["mcp","serve","--transport","http"] when the HTTP transport ships (§7a/§10.3).
 ENTRYPOINT ["/usr/bin/daxie"]
 CMD ["--help"]

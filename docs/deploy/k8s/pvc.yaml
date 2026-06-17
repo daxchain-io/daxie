@@ -1,0 +1,24 @@
+# state state class — a DURABLE PersistentVolumeClaim.
+#
+# Holds the tx journal + nonces, the sealed policy.json, and the rolling-24h spend
+# counters. It MUST persist across restarts: a fresh/empty state volume re-opens the
+# daily spend window (Daxie logs a prominent startup warning when state is empty but the
+# keystore has prior accounts), and a corrupt counter fails closed (exit 8) rather than
+# zeroing.
+#
+# ReadWriteOnce + a single replica gives the v1 single-writer-per-account guarantee
+# (file locks are reliable on one host, not across hosts). Set storageClassName + size
+# to suit your cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: daxie-state
+  labels:
+    app.kubernetes.io/name: daxie
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: <your-durable-storage-class>

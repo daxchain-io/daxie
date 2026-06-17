@@ -1,8 +1,24 @@
-# Install-script / packaging-config CI (design §9.5). MINIMAL in M0: the real
-# install.sh and its install-smoke matrix land at M12. Today this job is the
-# config-drift killer — it runs `goreleaser check` and fails on ANY deprecation
-# warning (the allowlist is empty because the config is already on dockers_v2),
-# plus shellcheck over the demo script (and over install.sh once it exists at M12).
+# Install-script / packaging-config CI (design §9.5). The pre-merge guard for
+# scripts/install.sh and the goreleaser packaging config. Four jobs:
+#
+#   1. goreleaser-check — `goreleaser check` + a deprecation-warning grep whose
+#      allowlist is empty (the config is on dockers_v2). Drift onto a deprecated
+#      stanza fails the build.
+#   2. shellcheck      — POSIX-sh lint of scripts/install.sh AND the demo scripts,
+#      plus a multi-shell parse (sh/dash/bash) and the --help/unknown-flag
+#      exit-code contract.
+#   3. snapshot-install — THE DRIFT KILLER. Runs `goreleaser release --snapshot`,
+#      serves the resulting dist/ over a local http.server, and installs through
+#      scripts/install.sh with DAXIE_INSTALL_BASE_URL pointing at it. This catches
+#      install.sh <-> .goreleaser.yml drift (archive name template, checksums.txt
+#      format, a dropped platform) on the PR that introduces it, BEFORE any tag —
+#      the release.yml pre-approval asset-name gate only runs at tag time.
+#   4. smoke-install   — install the NEWEST EXISTING release across
+#      alpine/debian/ubuntu/fedora + macOS, pinned to that tag (no GitHub API,
+#      deterministic). Gated on a "does any release exist yet" precheck so the job
+#      is a clean no-op until the first tag is cut.
+#
+# All third-party actions are SHA-pinned (dependabot bumps), matching release.yml.
 name: CI install-script
 
 on:
@@ -21,14 +37,23 @@ on:
       - "docs/demos/**"
       - "scripts/**"
       - ".github/workflows/ci-install-script.yml"
+  # Manual trigger so the smoke matrix can be exercised without touching one of
+  # the path-filter files (useful when committing straight to main).
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-install-script-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   goreleaser-check:
     name: goreleaser check (no deprecations)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -37,29 +62,242 @@ jobs:
           check-latest: true
       - uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
         with:
-          version: "~> v2"
-          args: check
-      - name: fail on any deprecation warning
-        # `goreleaser check` exits 0 even with deprecations; grep the rendered config
-        # for the deprecation marker so drift onto a deprecated stanza fails the build.
-        # The allowlist is empty: this config is on the current (non-deprecated) schema.
+          distribution: goreleaser
+          version: "~> v2.16"
+          install-only: true
+      - name: goreleaser check + fail on any deprecation warning
+        # `goreleaser check` exits 0 even with deprecations; grep the rendered
+        # config for the deprecation marker so drift onto a deprecated stanza
+        # fails the build. The allowlist is empty: this config is on the current
+        # (non-deprecated) schema.
         run: |
-          if goreleaser check 2>&1 | grep -i "deprecat"; then
-            echo "::error::goreleaser reported a deprecation; the allowlist is empty"
+          set -euo pipefail
+          out="$(goreleaser check 2>&1)"
+          echo "$out"
+          if echo "$out" | grep -iq 'deprecat'; then
+            echo "::error::goreleaser reported a deprecation; the allowlist is empty" >&2
             exit 1
           fi
 
   shellcheck:
-    name: shellcheck demo scripts
+    name: shellcheck (install.sh + demos) + parse
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: shellcheck
-        run: |
-          sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck docs/demos/*.sh
-          # M12: shellcheck scripts/install.sh too.
 
-  # ── M12: --snapshot build → local http.server → real install assertion, and the
-  #         alpine/debian/ubuntu/fedora/macos install-smoke matrix (gated on "does a
-  #         release exist yet"). Not present in M0 (no install.sh, no published tag).
+      - name: shellcheck (POSIX sh mode)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          # install.sh is the single curl|sh artifact every user runs — lint it
+          # in strict POSIX-sh mode. The demo scripts are bash/sh helpers.
+          shellcheck -s sh scripts/install.sh
+          shellcheck docs/demos/*.sh
+
+      - name: Parse install.sh under multiple shells
+        run: |
+          set -e
+          for sh_bin in sh dash bash; do
+            if command -v "$sh_bin" >/dev/null 2>&1; then
+              echo "::group::$sh_bin -n"
+              "$sh_bin" -n scripts/install.sh
+              echo "::endgroup::"
+            fi
+          done
+
+      - name: --help exits 0
+        run: sh scripts/install.sh --help >/dev/null
+
+      - name: Unknown flag exits 1
+        run: |
+          set +e
+          sh scripts/install.sh --bogus-flag >/dev/null 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected exit 1 on unknown flag, got $rc" >&2
+            exit 1
+          fi
+
+  # ── snapshot-install — THE DRIFT KILLER (design §9.5) ─────────────────────────
+  # Build snapshot artifacts, serve dist/ locally, and install through the real
+  # scripts/install.sh via DAXIE_INSTALL_BASE_URL. Catches the class of bug where
+  # install.sh and .goreleaser.yml drift apart on the same PR (archive name
+  # template, checksums.txt format, a dropped platform). The pre-merge smoke
+  # matrix can't catch this because it pins to the LATEST released tag (where the
+  # script and config were already in sync at release time); this job builds from
+  # the PR's own tree.
+  snapshot-install:
+    name: snapshot install (DAXIE_INSTALL_BASE_URL round-trip)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # goreleaser reads tag history so the snapshot resolves a sane version.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Build snapshot artifacts
+        # --snapshot turns off the git-tag requirement, signing, publishing, and
+        # the Homebrew tap push (it implies --skip=announce,publish,validate). We
+        # additionally skip sbom (syft not installed here), sign (cosign keyless
+        # needs OIDC), and docker (the image isn't part of the install.sh path).
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2.16"
+          args: release --snapshot --clean --skip=sbom,sign,docker
+
+      - name: Discover snapshot version
+        id: snapver
+        # goreleaser writes dist/metadata.json with the resolved version. python3
+        # is guaranteed-installed on ubuntu-latest, so no jq dependency.
+        run: |
+          set -euo pipefail
+          ver="$(python3 -c 'import json; print(json.load(open("dist/metadata.json"))["version"])')"
+          if [ -z "$ver" ]; then
+            echo "::error::could not read snapshot version from dist/metadata.json" >&2
+            exit 1
+          fi
+          echo "Snapshot version: $ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Serve dist/ on :8765
+        run: |
+          set -euo pipefail
+          python3 -m http.server --directory dist 8765 >/tmp/srv.log 2>&1 &
+          echo $! > /tmp/srv.pid
+          for _i in $(seq 1 30); do
+            curl -fs http://localhost:8765/checksums.txt >/dev/null && exit 0
+            sleep 0.1
+          done
+          echo "::error::snapshot http server failed to come up" >&2
+          cat /tmp/srv.log
+          exit 1
+
+      - name: Install snapshot via DAXIE_INSTALL_BASE_URL
+        # DAXIE_INSTALL_BASE_URL bypasses the /releases/download/<tag>/ path; the
+        # script otherwise behaves identically (SHA256 still verified against the
+        # snapshot's checksums.txt). Pin --version so the script's URL
+        # construction matches the snapshot artifact name EXACTLY — any drift here
+        # is exactly what this job exists to catch.
+        run: |
+          set -euo pipefail
+          DAXIE_INSTALL_BASE_URL=http://localhost:8765 \
+            sh scripts/install.sh --version "v${{ steps.snapver.outputs.version }}" \
+              --prefix /tmp/daxieroot
+          test -x /tmp/daxieroot/bin/daxie
+          test -f /tmp/daxieroot/bin/.daxie.install-info
+          grep -q "installer=curl" /tmp/daxieroot/bin/.daxie.install-info
+          grep -q "version=v${{ steps.snapver.outputs.version }}" /tmp/daxieroot/bin/.daxie.install-info
+          /tmp/daxieroot/bin/daxie version
+
+      - name: Tear down snapshot server
+        if: always()
+        run: |
+          if [ -f /tmp/srv.pid ]; then
+            kill "$(cat /tmp/srv.pid)" 2>/dev/null || true
+          fi
+
+  # ── smoke-install — newest-existing-release matrix (design §9.5) ──────────────
+  # Install the newest EXISTING stable release across the gnarliest distros +
+  # macOS, pinned to that exact tag (install.sh's --version sidesteps the GitHub
+  # API entirely, so the test is deterministic and rate-limit-free). Gated on a
+  # "does any release exist yet" precheck, so this is a clean no-op until the
+  # first stable tag is cut. Catches install.sh script bugs against a real, public
+  # release (release.yml's install-smoke covers the just-cut tag instead).
+  precheck-release:
+    name: precheck — does a stable release exist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # need tag history for the latest-tag probe
+      - name: Resolve latest existing stable tag
+        id: tag
+        run: |
+          set -euo pipefail
+          # Newest tag the repo has actually cut, prereleases excluded. Empty
+          # output ⇒ the smoke matrix below skips itself (no release to test).
+          tag="$(git tag --list 'v*.*.*' --sort=-version:refname \
+            | grep -Ev -- '-(beta|rc)\.' | head -n 1 || true)"
+          if [ -z "$tag" ]; then
+            echo "no stable release tag found — smoke matrix will be a no-op"
+          else
+            echo "Using tag: $tag"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  smoke-install:
+    name: smoke install — ${{ matrix.image }}
+    needs: precheck-release
+    if: needs.precheck-release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - alpine:3.20
+          - debian:12-slim
+          - ubuntu:22.04
+          - fedora:40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Real install of ${{ needs.precheck-release.outputs.tag }} inside ${{ matrix.image }}
+        env:
+          TAG: ${{ needs.precheck-release.outputs.tag }}
+        run: |
+          docker run --rm -v "$PWD":/src -w /src -e TAG="$TAG" ${{ matrix.image }} sh -eux -c '
+            case "$(. /etc/os-release && echo "$ID")" in
+              alpine) apk add --no-cache curl ca-certificates tar ;;
+              debian|ubuntu) apt-get update -qq && apt-get install -y -qq curl ca-certificates tar ;;
+              fedora) dnf install -y -q curl ca-certificates tar ;;
+            esac
+            sh scripts/install.sh --version "$TAG" --prefix /tmp/daxieroot
+            test -x /tmp/daxieroot/bin/daxie
+            test -f /tmp/daxieroot/bin/.daxie.install-info
+            grep -q "installer=curl" /tmp/daxieroot/bin/.daxie.install-info
+            grep -q "version=$TAG" /tmp/daxieroot/bin/.daxie.install-info
+            /tmp/daxieroot/bin/daxie version
+
+            # Day-2 flow: same-version re-install is a no-op without --force.
+            sh scripts/install.sh --version "$TAG" --prefix /tmp/daxieroot > /tmp/noop-out 2>&1
+            cat /tmp/noop-out
+            grep -q "already installed" /tmp/noop-out \
+              || { echo "expected already-installed no-op message" >&2; exit 1; }
+          '
+
+  smoke-install-macos:
+    name: smoke install — macOS
+    needs: precheck-release
+    if: needs.precheck-release.outputs.tag != ''
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Real install of ${{ needs.precheck-release.outputs.tag }} (macOS arm64)
+        env:
+          TAG: ${{ needs.precheck-release.outputs.tag }}
+        run: |
+          sh scripts/install.sh --version "$TAG" --prefix /tmp/daxieroot
+          test -x /tmp/daxieroot/bin/daxie
+          test -f /tmp/daxieroot/bin/.daxie.install-info
+          grep -q "installer=curl" /tmp/daxieroot/bin/.daxie.install-info
+          /tmp/daxieroot/bin/daxie version

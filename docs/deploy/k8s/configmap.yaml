@@ -1,0 +1,39 @@
+# config state class — mounted READ-ONLY into the agent pod.
+#
+# Holds config.toml (networks, RPC endpoints, gas/tx defaults) AND policy-anchor.json
+# (the Ed25519 seal VERIFY key + scrypt salt/params + nonce watermark — the policy
+# TRUST ROOT). The read-only ConfigMap is the one mount the agent cannot write, which
+# is exactly why the anchor lives here. Replace policy-anchor.json with the value
+# emitted by the out-of-band bootstrap `policy set` (see policy-k8s.md) — do NOT use
+# the placeholder below.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: daxie-config
+  labels:
+    app.kubernetes.io/name: daxie
+data:
+  config.toml: |
+    schema = 1
+
+    [defaults]
+    network = "mainnet"
+
+    [gas]
+    limit-multiplier = 1.2
+
+    # RPC endpoints; secrets are ${env:}/${file:} references, never literals.
+    [rpc.mainnet-default]
+    network = "mainnet"
+    url = "https://mainnet.infura.io/v3/${env:INFURA_PROJECT_ID}"
+
+  # PLACEHOLDER — replace with the anchor JSON emitted by `policy set --anchor-out`
+  # (see docs/deploy/policy-k8s.md). The agent holds only this PUBLIC verify key; it
+  # cannot forge a seal. Land policy.json on the state PVC FIRST, then publish this.
+  policy-anchor.json: |
+    {
+      "schema": 1,
+      "verify_key": "REPLACE_WITH_BASE64_ED25519_VERIFY_KEY",
+      "salt": "REPLACE_WITH_SCRYPT_SALT",
+      "watermark": 0
+    }
