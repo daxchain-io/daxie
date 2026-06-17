@@ -738,7 +738,7 @@ func (s *Service) resolveIntent(ctx context.Context, p domain.Principal, req dom
 	if err != nil {
 		return Intent{}, err
 	}
-	emitResolved(sink, dest.Address.Hex(), "to "+destLabel(dest))
+	emitResolvedDest(sink, "to ", dest)
 
 	// ── dial + chain id ──
 	cc, err := s.chains.ClientFor(ctx, ChainRequest{Network: req.Network, RPC: req.RPC})

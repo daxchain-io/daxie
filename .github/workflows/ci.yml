@@ -230,12 +230,24 @@ jobs:
         # cumulative + attribution; covers ETH cumulative (single + multi-payment), an
         # ERC-20 log-detection receive, a --new fresh-address invoice receive, and the
         # no-payment → terminal `timeout` exit 8 with an executable, statelessly-resumable
-        # resume string). The
+        # resume string), and M9's gasless sign/verify surface against a freshly-deployed
+        # EIP-2612 permit token (internal/testchain/erc2612.go + erc2612bytecode.go
+        # deploy + Permit712 typed-data builder + raw-RPC nonces/allowance readers +
+        # SubmitPermit; the internal/cli/sign_integration_test.go scenarios: the REAL
+        # permit roundtrip — `sign typed` an allowlisted EIP-2612 Permit → submit it to
+        # the token's on-chain permit() → assert allowance == value (the executable proof
+        # a Daxie-signed permit is a valid, fund-moving authorization); a sign message +
+        # verify roundtrip (correct ⇒ valid exit 0; wrong address ⇒ mismatch exit 2 with
+        # the recovered address; --no-hash digest roundtrip); a permit to a NON-allowlisted
+        # spender DENIED at SIGNATURE time (exit 3, nothing signed, allowance stays 0); an
+        # unknown EIP-712 message DENIED typed_data.unknown, then OPENED by `policy typed
+        # allow` and DENIED again after `policy typed remove`; a wrong-chainId permit
+        # DENIED chain_mismatch). The
         # `./...` +
         # `-tags integration` already compiles and runs every //go:build integration
-        # file, so the M3+M5+M6+M7+M8 tests are covered without a new job; CGO=1 so -race
-        # is available on the one job that talks to a real EVM (shipped binaries stay
-        # CGO_ENABLED=0).
+        # file, so the M3+M5+M6+M7+M8+M9 tests are covered without a new job; CGO=1 so
+        # -race is available on the one job that talks to a real EVM (shipped binaries
+        # stay CGO_ENABLED=0).
         env:
           CGO_ENABLED: "1"
         run: go test -race -tags integration ./...
@@ -424,3 +436,35 @@ jobs:
         run: |
           chmod +x docs/demos/m08.sh
           DAXIE="$PWD/daxie" docs/demos/m08.sh
+
+  demo-m09:
+    name: m09 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m09.sh unmodified
+        # The M9 gasless-signing acceptance demo (§10.1 gate, v0.9.0): `daxie sign
+        # message` (EIP-191) / `sign typed` (EIP-712) / `verify` / `policy typed
+        # allow|remove`. DRY: the commands + full flag set exist; ambiguous message
+        # sources, a bad --no-hash digest, --unlimited without --yes, a two-scheme
+        # verify, and missing policy-typed flags all ⇒ exit 2. LIVE (anvil + cast on
+        # PATH via foundry-toolchain): deploy a real EIP-2612 permit token (the
+        # bytecode checked into internal/testchain/erc2612bytecode.go), then — sign a
+        # message + verify it (and a wrong-address mismatch ⇒ exit 2); seal a policy
+        # that allowlists a spender, sign an EIP-2612 Permit, SUBMIT it to the token's
+        # on-chain permit() and assert allowance == value (the real roundtrip — the
+        # executable proof a Daxie-signed permit is a valid, fund-moving authorization);
+        # a permit to a NON-allowlisted spender DENIED at SIGNATURE time (exit 3,
+        # policy.denied); an unknown EIP-712 message DENIED typed_data.unknown, OPENED by
+        # `policy typed allow`, DENIED again after `policy typed remove`; and a
+        # wrong-chainId permit DENIED. Asserts §5.7 codes 0/2/3.
+        run: |
+          chmod +x docs/demos/m09.sh
+          DAXIE="$PWD/daxie" docs/demos/m09.sh

@@ -322,3 +322,20 @@ func emitResolved(emit domain.EventSink, addr, detail string) {
 	}
 	emit(domain.Event{Kind: domain.EvResolved, Detail: d, Stream: "stderr"})
 }
+
+// emitResolvedDest fires the EvResolved echo for a resolved send/spender
+// destination (§5.10). destLabel already carries the address — "name (0x…)" for a
+// contact/ENS, the bare 0x for a literal — so the address is rendered exactly once
+// and NOT appended a second time. The structured Address field is still populated
+// from the resolved dest for any consumer that prefers it over parsing Detail.
+func emitResolvedDest(emit domain.EventSink, prefix string, dest domain.Dest) {
+	if emit == nil {
+		return
+	}
+	emit(domain.Event{
+		Kind:    domain.EvResolved,
+		Address: dest.Address,
+		Detail:  prefix + destLabel(dest),
+		Stream:  "stderr",
+	})
+}

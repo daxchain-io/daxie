@@ -364,3 +364,90 @@ func TestEvaluatePinDrift(t *testing.T) {
 		t.Fatalf("a matching ENS resolution must pass; got %+v", dec)
 	}
 }
+
+// 11b. Pin drift, CONTACT source: a contact whose fresh resolution (carried in
+// ENSResolved) differs from the allow-time pin → pin_drift (contact_drift); a
+// matching resolution passes; and — the load-bearing point — a raw-address check
+// (ToSrc=SourceRawAddress, the value when the service does NOT thread provenance)
+// cannot drift, so the gate is invisible to it. This is exactly why the §4.3 stage-4
+// producer must set ToSrc/ToInput/ENSResolved (tx.go applyDestProvenance).
+func TestEvaluateContactPinDrift(t *testing.T) {
+	p := policyWithLimits("1000000000000000000", "0", "0", true)
+	p.Rules.Default.MaxDayWei = nil
+	p.Rules.Default.MaxGasPriceWei = nil
+	p.Allowlist = []PinEntry{{Source: "contact", Name: "payee", Address: lowerHex(dest)}}
+
+	// The producer sets Dest = the allow-time PIN (so the allowlist still matches and
+	// pin_drift is the only gate that fires) and ENSResolved = the FRESH resolution,
+	// which has drifted to `other`.
+	drift := Check{
+		Account: selfAcc, Dest: dest, SpendWei: big.NewInt(1), Network: "mainnet",
+		ToSrc: SourceContact, ToInput: "payee", ENSResolved: other,
+	}
+	dec := Evaluate(p, drift, big.NewInt(0), now0())
+	if dec.Code != codePinDrift || dec.Data["reason"] != "contact_drift" {
+		t.Fatalf("want contact_drift, got %+v", dec)
+	}
+	if dec.Data["name"] != "payee" {
+		t.Fatalf("contact_drift name = %v, want payee", dec.Data["name"])
+	}
+
+	// A matching fresh resolution (== the pin) passes.
+	ok := drift
+	ok.ENSResolved = dest
+	if dec := Evaluate(p, ok, big.NewInt(0), now0()); !dec.Allowed {
+		t.Fatalf("a matching contact resolution must pass; got %+v", dec)
+	}
+
+	// Dormant state: ToSrc=SourceRawAddress (zero value) ⇒ stage 4 never fires even
+	// though ENSResolved drifted. The Dest (== the pin) is allowlisted, so the whole
+	// check passes — the drift is silently unenforced. The wiring is what binds it.
+	dormant := drift
+	dormant.ToSrc = SourceRawAddress
+	if dec := Evaluate(p, dormant, big.NewInt(0), now0()); !dec.Allowed {
+		t.Fatalf("a raw-address check cannot drift (no provenance); want allowed, got %+v", dec)
+	}
+}
+
+// 11c. Denylist NAME broadening: a denied contact/ENS entry blocks a re-pointed
+// name even after it resolves to a FRESH address that is NOT the pin — but only
+// because Check.ToInput carries the typed name (§4.8). Without ToInput (the dormant
+// state) the fresh address slips past the by-name clause. The pinned address still
+// matches directly.
+func TestEvaluateDenylistNameBroadening(t *testing.T) {
+	// Allowlist OFF + no limits: absent the denylist a send is allowed, isolating the
+	// name-broadening clause as the sole gate under test.
+	p := policyWithLimits("0", "0", "0", false)
+	p.Rules.Default.MaxTxWei = nil
+	p.Rules.Default.MaxDayWei = nil
+	p.Rules.Default.MaxGasPriceWei = nil
+	// A denied contact pinned at allow-time to `dest`, by name "scammer".
+	p.Denylist = []PinEntry{{Source: "contact", Name: "scammer", Address: lowerHex(dest)}}
+
+	// Re-pointed to a FRESH address (`other` ≠ the pin): the address clause cannot
+	// match, but the NAME clause (ToInput) keeps it blocked.
+	repointed := Check{
+		Account: selfAcc, Dest: other, SpendWei: big.NewInt(1), Network: "mainnet",
+		ToSrc: SourceContact, ToInput: "scammer",
+	}
+	dec := Evaluate(p, repointed, big.NewInt(0), now0())
+	if dec.Allowed || dec.Code != codeAllowlist || dec.Data["reason"] != "denylisted" {
+		t.Fatalf("a re-pointed denied contact name must stay blocked; got %+v", dec)
+	}
+
+	// Dormant state: drop ToInput (the service never threaded the typed name). The
+	// fresh address no longer matches by name, so the re-pointed send slips through —
+	// the broadening rule's whole reason to exist.
+	dormant := repointed
+	dormant.ToInput = ""
+	dormant.ToSrc = SourceRawAddress
+	if dec := Evaluate(p, dormant, big.NewInt(0), now0()); !dec.Allowed {
+		t.Fatalf("without the threaded name a fresh address must NOT match by name; got %+v", dec)
+	}
+
+	// The pinned denied address itself still matches directly (address clause).
+	atPin := Check{Account: selfAcc, Dest: dest, SpendWei: big.NewInt(1), Network: "mainnet"}
+	if dec := Evaluate(p, atPin, big.NewInt(0), now0()); dec.Allowed || dec.Data["reason"] != "denylisted" {
+		t.Fatalf("the pinned denied address must match directly; got %+v", dec)
+	}
+}

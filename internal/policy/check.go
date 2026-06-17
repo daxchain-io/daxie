@@ -40,6 +40,18 @@ type Check struct {
 	TokenAmt     *big.Int       // raw token base units (display only in v1)
 	Unlimited    bool           // unbounded approval/permit (sentinel match)
 	AccountNonce *uint64        // RBF supersession
+
+	// ── M9 unknown-typed-data path (default-zero; ONLY SignTyped's authorizeSignature
+	// sets these, for an EIP-712 message that matched NO §4.2 recognizer). They drive
+	// the §4.3 stage-5 typed-data gate: deny-by-default once a policy is active, with
+	// the per-domain TypedData.Allowed[] registry (matched on the triple) + the
+	// chain-mismatch deny. A recognized spend-equivalent permit does NOT use these — it
+	// rides the KindPermit path (KindEnum=KindPermit + the chain-mismatch Asset marker
+	// the M4 stage-5 branch already reads). ──
+	TypedUnknown   bool   // the message is typed but matched no recognizer
+	TypedPrimary   string // the EIP-712 primaryType
+	TypedVerifying string // domain.verifyingContract (lowercase 0x) the message declared
+	TypedChainID   int64  // domain.chainId the message declared (0 if absent)
 }
 
 // Kind is the §4.2 request kind. There is NO opaque KindContractCall: arbitrary
@@ -146,4 +158,24 @@ type TypedDataClass struct {
 	Primary    string // the matched primaryType
 	Denied     bool   // a chain mismatch (or shape on a hostile domain) ⇒ hard deny
 	DenyReason string // "chain_mismatch" when Denied
+
+	// Tokens is the underlying ERC-20(s) the spend-equivalent approves — one entry
+	// per token/amount the message authorizes (§4.2 "one Check per token/amount
+	// entry"). For EIP-2612/DAI the token IS domain.verifyingContract (the recognizer
+	// fills a single entry from Verifying); for Permit2 it is the inner
+	// details.token / permitted.token (NOT the Permit2 contract — so the per-token
+	// `allow_unlimited:false` hard-deny is keyed on the real ERC-20). Batch Permit2
+	// forms yield >1 entry; service emits one Check per entry and signs only if all
+	// pass. Each entry carries its OWN Unlimited bit so a batch that mixes a bounded
+	// and an unbounded amount gates the right token.
+	Tokens []SpendToken
+}
+
+// SpendToken is one underlying ERC-20 entry of a recognized spend-equivalent: the
+// token contract (lowercase 0x) and whether THAT entry's amount is an unlimited
+// sentinel (§4.2). A single permit yields one entry; a Permit2 batch yields one per
+// permitted item.
+type SpendToken struct {
+	Token     string // the underlying ERC-20 contract (lowercase 0x)
+	Unlimited bool   // this entry's amount is an unlimited sentinel
 }

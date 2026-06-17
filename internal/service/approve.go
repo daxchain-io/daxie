@@ -105,7 +105,7 @@ func (s *Service) resolveApproveIntent(ctx context.Context, p domain.Principal, 
 	if err != nil {
 		return Intent{}, nil, err
 	}
-	emitResolved(sink, spenderDest.Address.Hex(), "spender "+destLabel(spenderDest))
+	emitResolvedDest(sink, "spender ", spenderDest)
 
 	// ── dial + chain id ──
 	cc, err := s.chains.ClientFor(ctx, ChainRequest{Network: req.Network, RPC: req.RPC})

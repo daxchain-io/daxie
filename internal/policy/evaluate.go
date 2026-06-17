@@ -66,6 +66,20 @@ func Evaluate(p Policy, req Check, spentWindowWei *big.Int, now time.Time) Decis
 	kind := req.effectiveKind()
 	var vs []Violation
 
+	// ── M9 unknown-typed-data short-circuit (§4.3 stage 5). An UNRECOGNIZED EIP-712
+	// message carries no ETH dest, no SpendWei, no gas — the value-path stages (3
+	// allowlist, 6 per-tx, 7 daily, 8 gas-cap) have nothing to bound and would
+	// otherwise mis-fire (e.g. the allowlist gate would deny the zero Dest with the
+	// higher-precedence allowlist code, masking the correct typed_data verdict). Run
+	// ONLY the typed-data gate for it. (A RECOGNIZED permit does NOT take this branch —
+	// it rides the full pipeline as KindPermit, exactly like an on-chain approval.) ──
+	if req.TypedUnknown {
+		if v, ok := stageTypedData(p, lim, req); ok {
+			return composeDenial([]Violation{v})
+		}
+		return Decision{Allowed: true}
+	}
+
 	// ── Stage 3: denylist → allowlist → fail-closed no-allowlist ──
 	if v, ok := stageDenylist(p, req); ok {
 		vs = append(vs, v)
@@ -90,7 +104,7 @@ func Evaluate(p Policy, req Check, spentWindowWei *big.Int, now time.Time) Decis
 	// hook for unknown typed data / stage-5b unknown calldata is M9/M10; in M4 the
 	// Check carries the classification result and this stage refuses a denied
 	// (chain-mismatch) permit. ──
-	if v, ok := stageTypedData(req); ok {
+	if v, ok := stageTypedData(p, lim, req); ok {
 		vs = append(vs, v)
 	}
 
@@ -312,26 +326,101 @@ func stagePinDrift(req Check) (Violation, bool) {
 	return Violation{}, false
 }
 
-// ── Stage 5: typed-data gate (chain mismatch on a recognized permit) ─────────-
+// ── Stage 5: typed-data gate (chain mismatch + the unknown-typed deny-by-default) ─
 
-// stageTypedData refuses a permit whose classification was marked Denied (a
-// chain mismatch — a permit for another chain signed on the active network, the
-// §4.2 exfiltration trick). The unknown-typed-data deny-by-default + per-domain
-// allow registry is the M9 surface; the structural hook is present.
-func stageTypedData(req Check) (Violation, bool) {
-	// req carries the classification result via Asset/Token only for value paths;
-	// the typed path threads a denied flag through KindEnum==KindPermit + the
-	// engine's typed classification. In M4 service marks a chain-mismatch permit
-	// by setting Check.KindEnum=KindPermit and Asset="chain_mismatch:<id>"; the
-	// pure engine refuses it. (Kept structural so M9 fills the registry.)
-	if req.effectiveKind() == KindPermit && strings.HasPrefix(req.Asset, "chain_mismatch") {
+// stageTypedData is the §4.3 stage-5 typed-data gate. Two paths:
+//
+//   - RECOGNIZED spend-equivalent permit (KindPermit): a chain mismatch — a permit
+//     for another chain signed on the active network, the §4.2 exfiltration trick —
+//     is marked by service setting Asset="chain_mismatch:<id>" (via
+//     ClassifyTypedDataFor). The pure engine refuses it. The permit otherwise runs
+//     stages 3/3c/6 like an on-chain approval (spender allowlist + fail-closed +
+//     unlimited-ack); this stage adds only the chain-mismatch deny.
+//
+//   - UNRECOGNIZED typed message (Check.TypedUnknown, set only by SignTyped's
+//     authorizeSignature once a policy is active): DENY BY DEFAULT. Order:
+//     (a) a chain mismatch (Asset marker) ⇒ deny chain_mismatch;
+//     (b) the (chain_id, verifying_contract, primary_type) triple in
+//     TypedData.Allowed[] ⇒ ALLOW (pass the gate);
+//     (c) typed_data.unknown == "allow" (per-network override) ⇒ allow;
+//     (d) otherwise ⇒ deny typed_data.unknown. "I can't classify it" is NEVER
+//     "harmless" (§4.2 table row 4).
+//
+// This stage runs only when a policy is present (the impure Evaluate calls the pure
+// pipeline only for present policies), which is exactly the "once a policy is active"
+// condition the deny-by-default rule requires.
+func stageTypedData(p Policy, lim resolvedLimits, req Check) (Violation, bool) {
+	chainMismatch := strings.HasPrefix(req.Asset, "chain_mismatch")
+
+	// Recognized spend-equivalent permit: only the chain-mismatch deny lives here.
+	if req.effectiveKind() == KindPermit && chainMismatch {
 		return Violation{
 			Code:   codeTypedData,
 			Reason: "the typed-data permit targets a different chain than the active network (chain_mismatch)",
 			Data:   map[string]any{"reason": "chain_mismatch"},
 		}, true
 	}
-	return Violation{}, false
+
+	if !req.TypedUnknown {
+		return Violation{}, false
+	}
+
+	// (a) chain mismatch on unrecognized typed data ⇒ deny.
+	if chainMismatch {
+		return Violation{
+			Code:   codeTypedData,
+			Reason: "the typed-data message targets a different chain than the active network (chain_mismatch)",
+			Data: map[string]any{
+				"reason":             "chain_mismatch",
+				"primary_type":       req.TypedPrimary,
+				"verifying_contract": req.TypedVerifying,
+				"chain_id":           req.TypedChainID,
+			},
+		}, true
+	}
+
+	// (b) the per-domain allow registry: an exact triple match passes the gate.
+	if typedAllowMatch(p.TypedData.Allowed, req) {
+		return Violation{}, false
+	}
+
+	// (c) the resolved disposition: "allow" lets unrecognized typed data through.
+	if strings.EqualFold(strings.TrimSpace(lim.typedUnknown), "allow") {
+		return Violation{}, false
+	}
+
+	// (d) deny-by-default: unknown typed data with no allow entry and no allow switch.
+	return Violation{
+		Code:   codeTypedData,
+		Reason: "this typed-data message is not a recognized spend-equivalent and no policy allow entry covers it; refusing (typed_data.unknown). Add it with `daxie policy typed allow`",
+		Data: map[string]any{
+			"reason":             "unknown",
+			"primary_type":       req.TypedPrimary,
+			"verifying_contract": req.TypedVerifying,
+			"chain_id":           req.TypedChainID,
+		},
+	}, true
+}
+
+// typedAllowMatch reports whether the unrecognized typed message matches a pinned
+// TypedData.Allowed[] entry on the EXACT triple (chain_id, verifying_contract,
+// primary_type). The verifying_contract compare is case-insensitive (addresses are
+// stored lowercased; the message value is lowercased by service). chain_id 0 in the
+// message never matches a real entry (a triple pins a positive chain).
+func typedAllowMatch(allowed []TypedAllow, req Check) bool {
+	for _, a := range allowed {
+		if int64(a.ChainID) != req.TypedChainID {
+			continue
+		}
+		if !strings.EqualFold(a.VerifyingContract, req.TypedVerifying) {
+			continue
+		}
+		if a.PrimaryType != req.TypedPrimary {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // ── Stage 6: per-tx ETH limit + unlimited ceremony ───────────────────────────
@@ -492,6 +581,11 @@ type resolvedLimits struct {
 	allowlistEnabled bool
 	includeSelf      bool
 	anySet           bool
+	// typedUnknown is the resolved §4.3 stage-5 disposition for UNRECOGNIZED typed
+	// data: the policy-wide typed_data.unknown ("allow"|"deny") overridden by the
+	// per-network typed_data_unknown field. "" is treated as "deny" by the gate
+	// (deny-by-default once a policy is active).
+	typedUnknown string
 }
 
 // resolveLimits computes the effective limits for req.Network: start from the
@@ -505,6 +599,9 @@ func resolveLimits(p Policy, network string) resolvedLimits {
 		maxGasPrice:      parseLimit(d.MaxGasPriceWei),
 		allowlistEnabled: boolOr(d.AllowlistEnabled, false),
 		includeSelf:      boolOr(d.IncludeSelf, false),
+		// The policy-wide typed_data.unknown is the base; a per-network
+		// typed_data_unknown field overrides it below.
+		typedUnknown: p.TypedData.Unknown,
 	}
 	for _, n := range p.Rules.Networks {
 		if !strings.EqualFold(n.Network, network) {
@@ -518,6 +615,9 @@ func resolveLimits(p Policy, network string) resolvedLimits {
 		}
 		if n.IncludeSelf != nil {
 			out.includeSelf = *n.IncludeSelf
+		}
+		if n.TypedDataUnknown != nil {
+			out.typedUnknown = *n.TypedDataUnknown
 		}
 		break
 	}

@@ -185,6 +185,14 @@ var codeExit = map[string]ExitCode{
 	"config.invalid":            ExitUsage,
 	"config.schema_unsupported": ExitUsage,
 	"secret.unresolved":         ExitUsage,
+	// M9 sign/verify input + validation outcomes (§5.7). verify.mismatch is exit 2
+	// (a validation result), NEVER exit 4 — that band is the wrong/missing keystore
+	// passphrase, and an agent must not conflate "your passphrase is wrong" with
+	// "this signature does not verify".
+	"sign.bad_message":     ExitUsage,
+	"sign.bad_typed":       ExitUsage,
+	"verify.bad_signature": ExitUsage,
+	"verify.mismatch":      ExitUsage,
 
 	// 3 — POLICY_DENIED (covers all policy.denied.* via the prefix rule)
 	"policy.denied": ExitPolicyDenied,

@@ -7,6 +7,7 @@ import (
 	"github.com/daxchain-io/daxie/internal/cli/render"
 	"github.com/daxchain-io/daxie/internal/domain"
 	"github.com/daxchain-io/daxie/internal/service"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/spf13/cobra"
 )
 
@@ -50,8 +51,133 @@ func newPolicyCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newPolicyPinCmd(ctx, rs),
 		newPolicyChangeAdminCmd(ctx, rs),
 		newPolicyResetCmd(ctx, rs),
+		newPolicyTypedCmd(ctx, rs), // M9
 	)
 	return cmd
+}
+
+// ── typed allow | remove (M9) ─────────────────────────────────────────────────
+
+// newPolicyTypedCmd is the `daxie policy typed` parent: the per-domain typed-data
+// allow registry (design §4.3 stage-5 + §4.5 typed_data.allowed[]). It manages the
+// sealed allowlist of (chain_id, verifying_contract, primary_type) triples that let
+// an OTHERWISE-unknown EIP-712 message pass the stage-5 deny-by-default gate. Both
+// mutations require the ADMIN passphrase (like every policy mutation): a compromised
+// agent that can sign within policy cannot widen the set of typed messages it may
+// sign.
+func newPolicyTypedCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "typed",
+		Short: "Manage the per-domain EIP-712 typed-data allow registry (admin passphrase)",
+		Long: "Allow / remove a specific EIP-712 typed-data domain so an otherwise-unknown\n" +
+			"message can be signed. An entry pins the triple (chain-id, verifying-contract,\n" +
+			"primary-type); a signed `sign typed` whose document matches a pinned entry\n" +
+			"passes the stage-5 deny-by-default gate, everything else is refused\n" +
+			"(typed_data.unknown) once a policy is active. Recognized spend-equivalent\n" +
+			"permits (EIP-2612 / DAI / Permit2) do NOT need an entry — they are gated by the\n" +
+			"approvals path instead.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	}
+	cmd.AddCommand(
+		newPolicyTypedAllowCmd(ctx, rs),
+		newPolicyTypedRemoveCmd(ctx, rs),
+	)
+	return cmd
+}
+
+func newPolicyTypedAllowCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	var af adminPassphraseFlags
+	var chainID int
+	var contract, primaryType, label, anOut string
+	cmd := &cobra.Command{
+		Use:   "allow --chain-id <id> --contract <0x> --primary-type <Name> [--label <note>]",
+		Short: "Allow an EIP-712 typed-data domain by its (chain-id, contract, primary-type) triple (admin passphrase)",
+		Long: "Pin a typed-data domain into the stage-5 allow registry. An unknown EIP-712\n" +
+			"message whose domain.chainId / domain.verifyingContract / primaryType match the\n" +
+			"pinned triple then passes the deny-by-default gate. --contract is matched\n" +
+			"case-insensitively; --primary-type is the EIP-712 primaryType string.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runPolicyTyped(ctx, cmd, rs, af, chainID, contract, primaryType, label, anOut, false)
+		},
+	}
+	fl := cmd.Flags()
+	fl.IntVar(&chainID, "chain-id", 0, "the EIP-712 domain chain-id (required)")
+	fl.StringVar(&contract, "contract", "", "the EIP-712 domain.verifyingContract (0x, required)")
+	fl.StringVar(&primaryType, "primary-type", "", "the EIP-712 primaryType (required)")
+	fl.StringVar(&label, "label", "", "an operator note stored with the entry")
+	fl.StringVar(&anOut, "anchor-out", "", "write the updated anchor to this path (read-only config)")
+	af.bind(cmd)
+	return cmd
+}
+
+func newPolicyTypedRemoveCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	var af adminPassphraseFlags
+	var chainID int
+	var contract, primaryType, anOut string
+	cmd := &cobra.Command{
+		Use:   "remove --chain-id <id> --contract <0x> --primary-type <Name>",
+		Short: "Remove an EIP-712 typed-data domain from the allow registry (admin passphrase)",
+		Long: "Remove a previously-allowed typed-data triple. After removal an EIP-712\n" +
+			"message matching it is once again refused by the stage-5 deny-by-default gate\n" +
+			"(once a policy is active).",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runPolicyTyped(ctx, cmd, rs, af, chainID, contract, primaryType, "", anOut, true)
+		},
+	}
+	fl := cmd.Flags()
+	fl.IntVar(&chainID, "chain-id", 0, "the EIP-712 domain chain-id (required)")
+	fl.StringVar(&contract, "contract", "", "the EIP-712 domain.verifyingContract (0x, required)")
+	fl.StringVar(&primaryType, "primary-type", "", "the EIP-712 primaryType (required)")
+	fl.StringVar(&anOut, "anchor-out", "", "write the updated anchor to this path (read-only config)")
+	af.bind(cmd)
+	return cmd
+}
+
+// runPolicyTyped is the shared body for `policy typed allow|remove`: validate the
+// required triple flags, open the service, build the request, call the admin-gated
+// use case, and render the mutate result (the same renderMutate set/allow/deny use).
+func runPolicyTyped(ctx context.Context, cmd *cobra.Command, rs *rootState, af adminPassphraseFlags, chainID int, contract, primaryType, label, anOut string, remove bool) error {
+	if chainID <= 0 {
+		return domain.New(domain.CodeUsage+".bad_typed_allow", "--chain-id must be a positive chain id")
+	}
+	if !common.IsHexAddress(contract) {
+		return domain.New(domain.CodeUsage+".bad_typed_allow", "--contract must be a 0x address (the EIP-712 verifyingContract)")
+	}
+	if primaryType == "" {
+		return domain.New(domain.CodeUsage+".bad_typed_allow", "--primary-type is required (the EIP-712 primaryType)")
+	}
+	svc, closeFn, err := openService(ctx, rs)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+
+	req := service.PolicyTypedAllowRequest{
+		ChainID:           chainID,
+		VerifyingContract: contract,
+		PrimaryType:       primaryType,
+		Label:             label,
+		Remove:            remove,
+		AnchorOut:         anOut,
+	}
+	in := service.AdminInput{Stdin: af.stdin, File: af.file}
+	var res service.PolicyMutateResult
+	if remove {
+		res, err = svc.PolicyTypedRemove(cmd.Context(), domain.LocalCLI(), req, in)
+	} else {
+		res, err = svc.PolicyTypedAllow(cmd.Context(), domain.LocalCLI(), req, in)
+	}
+	if err != nil {
+		return err
+	}
+	label2 := "policy typed allow"
+	if remove {
+		label2 = "policy typed remove"
+	}
+	return renderMutate(cmd, rs, res, label2)
 }
 
 // ── show ─────────────────────────────────────────────────────────────────────

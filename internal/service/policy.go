@@ -148,6 +148,15 @@ type PolicyMutateResult struct {
 	Name       string `json:"name,omitempty"`
 	Pinned     string `json:"pinned,omitempty"`      // the resolved 0x that was sealed
 	ResolvedAt string `json:"resolved_at,omitempty"` // the §4.8 resolved-at timestamp
+
+	// M9 typed-data allow/remove ECHO (cli-spec §`policy typed allow/remove`): the
+	// triple that was admitted to / removed from the §4.3 stage-5 per-domain registry,
+	// so the operator confirms WHAT (chain, contract, primaryType) was sealed. Empty
+	// for the non-typed mutations.
+	TypedChainID     int    `json:"typed_chain_id,omitempty"`
+	TypedContract    string `json:"typed_contract,omitempty"`
+	TypedPrimaryType string `json:"typed_primary_type,omitempty"`
+	TypedRemoved     bool   `json:"typed_removed,omitempty"`
 }
 
 // PolicyCheckResult is the `policy check` what-if verdict (§4.7): the full Decision,
@@ -205,6 +214,20 @@ type PolicyAllowRequest struct {
 	AnchorOut string
 }
 type PolicyDenyRequest = PolicyAllowRequest
+
+// PolicyTypedAllowRequest is the `policy typed allow/remove` request: it manages the
+// §4.3 stage-5 per-domain typed-data allow registry (Policy.TypedData.Allowed[]). An
+// entry pins the triple (chain_id, verifying_contract, primary_type) — an UNRECOGNIZED
+// typed message whose (domain.chainId, domain.verifyingContract, primaryType) matches
+// passes the stage-5 deny-by-default gate. Admin-passphrase gated.
+type PolicyTypedAllowRequest struct {
+	ChainID           int
+	VerifyingContract string
+	PrimaryType       string
+	Label             string
+	Remove            bool
+	AnchorOut         string
+}
 
 // ── use cases ────────────────────────────────────────────────────────────────
 
@@ -440,6 +463,50 @@ func (s *Service) PolicyDeny(ctx context.Context, _ domain.Principal, req Policy
 		return PolicyMutateResult{}, ferr
 	}
 	return withPinEcho(res, pin, req.Remove), nil
+}
+
+// PolicyTypedAllow admits (or removes) a typed-data domain in the §4.3 stage-5
+// per-domain registry under the admin passphrase (`policy typed allow`). The triple
+// (chain_id, verifying_contract, primary_type) is sealed into Policy.TypedData.Allowed[]
+// so an UNRECOGNIZED typed message matching it passes the deny-by-default gate. It is
+// admin-gated because opening an unrecognized typed-data domain widens what a hijacked
+// agent may sign (§4.2 "I can't classify it is never harmless").
+func (s *Service) PolicyTypedAllow(_ context.Context, _ domain.Principal, req PolicyTypedAllowRequest, in AdminInput) (PolicyMutateResult, error) {
+	adminPass, _, err := s.acquireAdmin(in)
+	if err != nil {
+		return PolicyMutateResult{}, err
+	}
+	defer adminPass.Zero()
+	entry := policy.TypedAllowEntry{
+		ChainID:           req.ChainID,
+		VerifyingContract: strings.ToLower(strings.TrimSpace(req.VerifyingContract)),
+		PrimaryType:       strings.TrimSpace(req.PrimaryType),
+		Label:             req.Label,
+		Remove:            req.Remove,
+		RefreshSelf:       s.selfSnapshot(),
+		WrittenBy:         version.Version,
+	}
+	anchor, serr := s.policy.TypedAllow(adminPass, entry)
+	if serr != nil {
+		return PolicyMutateResult{}, serr
+	}
+	res, ferr := s.finishMutation(anchor, req.AnchorOut, false)
+	if ferr != nil {
+		return PolicyMutateResult{}, ferr
+	}
+	res.TypedChainID = entry.ChainID
+	res.TypedContract = entry.VerifyingContract
+	res.TypedPrimaryType = entry.PrimaryType
+	res.TypedRemoved = req.Remove
+	return res, nil
+}
+
+// PolicyTypedRemove drops a typed-data allow entry by triple (`policy typed remove`).
+// It is PolicyTypedAllow with Remove=true (the engine matches the triple; a missing
+// entry is a no-op upsert-style remove, the same shape as `policy allow --remove`).
+func (s *Service) PolicyTypedRemove(ctx context.Context, p domain.Principal, req PolicyTypedAllowRequest, in AdminInput) (PolicyMutateResult, error) {
+	req.Remove = true
+	return s.PolicyTypedAllow(ctx, p, req, in)
 }
 
 // PolicyCountersRelease releases a stuck reservation by id under the admin

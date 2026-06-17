@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	gethmath "github.com/ethereum/go-ethereum/common/math"
 )
 
 // recognizers.go is the §4.2 spend-equivalent EIP-712 recognizer set, pure and
@@ -85,18 +86,27 @@ func classifyTypedData(primaryType string, domain, message map[string]any) Typed
 		c.ChainID = chainID
 		c.Verifying = verifying
 		c.Primary = primaryType
+		// EIP-2612: the token IS domain.verifyingContract (§4.2). One token entry,
+		// carrying this permit's Unlimited bit, so the per-token allow_unlimited rule
+		// is keyed on the real ERC-20 (which here equals the verifying contract).
+		c.Tokens = []SpendToken{{Token: verifying, Unlimited: c.Unlimited}}
 		return c
 	}
 	if c, ok := matchDAIPermit(primaryType, message); ok {
 		c.ChainID = chainID
 		c.Verifying = verifying
 		c.Primary = primaryType
+		// DAI-style: the token IS domain.verifyingContract (§4.2).
+		c.Tokens = []SpendToken{{Token: verifying, Unlimited: c.Unlimited}}
 		return c
 	}
 	if c, ok := matchPermit2(primaryType, verifying, message); ok {
 		c.ChainID = chainID
 		c.Verifying = verifying
 		c.Primary = primaryType
+		// matchPermit2 fills c.Tokens from the INNER details.token / permitted.token
+		// (never the Permit2 contract) so the per-token allow_unlimited:false hard-deny
+		// binds the real ERC-20 (§4.2 medium-severity fix).
 		return c
 	}
 	return TypedDataClass{IsSpend: false}
@@ -149,9 +159,26 @@ func matchDAIPermit(primaryType string, message map[string]any) (TypedDataClass,
 // matchPermit2 recognizes Permit2: domain.verifyingContract == the canonical
 // Permit2 address AND primaryType ∈ {PermitSingle, PermitBatch, PermitTransferFrom,
 // PermitBatchTransferFrom}. The extractor is a fixed switch on primaryType (four
-// shapes, four extractors); any shape mismatch returns ok=false (§4.2). For the
-// batch forms we report the spender + whether ANY entry is unlimited; service
-// signs only if all entries pass (the engine evaluates one Check per entry).
+// shapes, four extractors); any shape mismatch returns ok=false (§4.2).
+//
+// SPENDER. The two ALLOWANCE forms (PermitSingle/PermitBatch) sign an on-message
+// `spender` (the address granted the allowance) — required. The two SIGNATURE-
+// TRANSFER forms (PermitTransferFrom/PermitBatchTransferFrom) bind the spender as
+// msg.sender at permitTransferFrom() call time; the canonical Uniswap message may or
+// may not carry a top-level `spender` (the witnessed variant pins it, the plain one
+// does not). So for those two flavors the spender is OPTIONAL: if present it becomes
+// the allowlist subject; if absent the recognizer STILL classifies the message as a
+// spend-equivalent (a signature transfer moves funds with no on-chain spender bound
+// in the signature) and routes it through the unlimited-ack + chain-mismatch ceremony
+// with an empty Spender — never the dead-code fall-through to the unknown-typed gate
+// the old top-level-spender requirement caused (the high-severity fix).
+//
+// TOKEN. Each entry's underlying ERC-20 is read from details.token (allowance forms)
+// or permitted.token (transfer forms) and carried in TypedDataClass.Tokens — NEVER
+// the Permit2 contract — so the per-token allow_unlimited:false hard-deny binds the
+// real asset (the medium-severity fix). Batch forms emit one entry per item, each
+// with its own Unlimited bit; TypedDataClass.Unlimited stays the OR across entries
+// (the legacy single-bit summary). Any shape mismatch in any entry returns ok=false.
 func matchPermit2(primaryType, verifying string, message map[string]any) (TypedDataClass, bool) {
 	if verifying != permit2Contract {
 		return TypedDataClass{}, false
@@ -166,76 +193,88 @@ func matchPermit2(primaryType, verifying string, message map[string]any) (TypedD
 		if !ok {
 			return TypedDataClass{}, false
 		}
-		amt, ok := messageBig(details, "amount")
+		st, ok := permit2Token(details, uint160Max)
 		if !ok {
 			return TypedDataClass{}, false
 		}
-		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: amt.Cmp(uint160Max) == 0}, true
+		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: st.Unlimited, Tokens: []SpendToken{st}}, true
 	case "PermitBatch":
 		spender, ok := messageAddr(message, "spender")
 		if !ok {
 			return TypedDataClass{}, false
 		}
-		arr, ok := message["details"].([]any)
-		if !ok || len(arr) == 0 {
-			return TypedDataClass{}, false
-		}
-		unlimited := false
-		for _, el := range arr {
-			d, ok := el.(map[string]any)
-			if !ok {
-				return TypedDataClass{}, false
-			}
-			amt, ok := messageBig(d, "amount")
-			if !ok {
-				return TypedDataClass{}, false
-			}
-			if amt.Cmp(uint160Max) == 0 {
-				unlimited = true
-			}
-		}
-		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: unlimited}, true
-	case "PermitTransferFrom":
-		spender, ok := messageAddr(message, "spender")
+		toks, unlimited, ok := permit2Tokens(message["details"], uint160Max)
 		if !ok {
 			return TypedDataClass{}, false
 		}
+		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: unlimited, Tokens: toks}, true
+	case "PermitTransferFrom":
+		// Signature-transfer: no signed on-chain spender required (it is bound as
+		// msg.sender at call time). An optional top-level spender becomes the subject.
+		spender, _ := messageAddr(message, "spender")
 		permitted, ok := message["permitted"].(map[string]any)
 		if !ok {
 			return TypedDataClass{}, false
 		}
-		amt, ok := messageBig(permitted, "amount")
+		st, ok := permit2Token(permitted, uint256Max)
 		if !ok {
 			return TypedDataClass{}, false
 		}
-		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: amt.Cmp(uint256Max) == 0}, true
+		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: st.Unlimited, Tokens: []SpendToken{st}}, true
 	case "PermitBatchTransferFrom":
-		spender, ok := messageAddr(message, "spender")
+		spender, _ := messageAddr(message, "spender") // optional (see above)
+		toks, unlimited, ok := permit2Tokens(message["permitted"], uint256Max)
 		if !ok {
 			return TypedDataClass{}, false
 		}
-		arr, ok := message["permitted"].([]any)
-		if !ok || len(arr) == 0 {
-			return TypedDataClass{}, false
-		}
-		unlimited := false
-		for _, el := range arr {
-			d, ok := el.(map[string]any)
-			if !ok {
-				return TypedDataClass{}, false
-			}
-			amt, ok := messageBig(d, "amount")
-			if !ok {
-				return TypedDataClass{}, false
-			}
-			if amt.Cmp(uint256Max) == 0 {
-				unlimited = true
-			}
-		}
-		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: unlimited}, true
+		return TypedDataClass{IsSpend: true, Kind: "approve", Spender: spender, Unlimited: unlimited, Tokens: toks}, true
 	default:
 		return TypedDataClass{}, false
 	}
+}
+
+// permit2Token extracts one Permit2 entry's underlying token + unlimited bit from a
+// details/permitted object: token (required address) + amount (required, compared to
+// the form's unlimited sentinel — uint160 max for allowance forms, uint256 max for
+// transfer forms). A missing/unparseable token or amount returns ok=false (the §4.2
+// fail-direction: no partial extraction).
+func permit2Token(obj map[string]any, sentinel *big.Int) (SpendToken, bool) {
+	token, ok := messageAddr(obj, "token")
+	if !ok {
+		return SpendToken{}, false
+	}
+	amt, ok := messageBig(obj, "amount")
+	if !ok {
+		return SpendToken{}, false
+	}
+	return SpendToken{Token: token, Unlimited: amt.Cmp(sentinel) == 0}, true
+}
+
+// permit2Tokens extracts every entry of a Permit2 batch (details[]/permitted[]) into
+// a SpendToken slice and reports whether ANY entry is unlimited. A non-array, empty
+// array, or any malformed entry returns ok=false.
+func permit2Tokens(raw any, sentinel *big.Int) ([]SpendToken, bool, bool) {
+	arr, ok := raw.([]any)
+	if !ok || len(arr) == 0 {
+		return nil, false, false
+	}
+	toks := make([]SpendToken, 0, len(arr))
+	anyUnlimited := false
+	for _, el := range arr {
+		d, ok := el.(map[string]any)
+		if !ok {
+			return nil, false, false
+		}
+		st, ok := permit2Token(d, sentinel)
+		if !ok {
+			return nil, false, false
+		}
+		if st.Unlimited {
+			anyUnlimited = true
+		}
+		toks = append(toks, st)
+	}
+	return toks, anyUnlimited, true
 }
 
 // ── typed-data value coercion (JSON numbers arrive as float64/json.Number/string;
@@ -332,6 +371,16 @@ func messageBig(m map[string]any, key string) (*big.Int, bool) {
 			return nil, false
 		}
 		return new(big.Int).Set(t), true
+	case *gethmath.HexOrDecimal256:
+		// apitypes.TypedData.Domain.Map() returns domain.chainId (and any numeric
+		// uint256 the caller supplied as a JSON number) as a *math.HexOrDecimal256, a
+		// defined type over big.Int. Without this case readChainID returns 0 for every
+		// apitypes-parsed document, silently defeating the §4.2 chain-mismatch deny.
+		if t == nil {
+			return nil, false
+		}
+		b := big.Int(*t)
+		return &b, true
 	default:
 		return nil, false
 	}

@@ -436,6 +436,64 @@ func TestM8ReceiveFilesOnCorrectSide(t *testing.T) {
 	}
 }
 
+// TestM9SignFilesOnCorrectSide pins the M9 `daxie sign` / `daxie verify` files
+// explicitly onto the right side of the import matrix (design §2.2/§2.3c), per-FILE
+// rather than per-package, so a future edit that, say, makes the sign command reach a
+// provider (the keys backend, the policy engine) to "just classify one permit" goes
+// red here even if the package as a whole still has a legitimate provider import via
+// another file. The §2.7 authorizeSignature gate + the EIP-712 hashing + ecrecover
+// MUST stay in the core (the privileged sequence runs ahead of domain.Signer, behind
+// the service boundary frontends cannot cross); the commands stay thin hosts.
+//
+//   - cli/sign.go + cli/verify.go + cli/render/sign.go are FRONTEND files: they may
+//     import service + domain + render + cobra (+ ethunit for output) — never a
+//     provider (not policy, not keys, not chain). The geth common/apitypes/crypto
+//     value packages are external (stdlib-class to the matrix), so a frontend reading
+//     common.IsHexAddress for a flag check is fine; reaching internal/policy is not.
+//   - service/sign.go + service/verify.go are CORE files: they may import domain +
+//     providers (policy/keys/chain/ens/ethunit/…) — never a frontend (cli/render).
+//
+// The package-level TestImportMatrix already enforces the same law; this adds a
+// load-bearing file-scoped regression guard for the gasless-signing engine/frontend
+// split that M9 introduces.
+func TestM9SignFilesOnCorrectSide(t *testing.T) {
+	root := moduleRoot(t)
+	cases := []struct {
+		file       string // module-relative path
+		wantLayer  layer
+		bannedDesc string
+	}{
+		{"internal/cli/sign.go", layerFrontend, "a provider (the sign command is a thin host; authorizeSignature + EIP-712 hashing live in the core)"},
+		{"internal/cli/verify.go", layerFrontend, "a provider (the verify command is a thin host; ecrecover + ENS resolution live in the core)"},
+		{"internal/cli/render/sign.go", layerFrontend, "a provider (the sign/verify renderers format only; they import domain, never a provider)"},
+		{"internal/service/sign.go", layerCore, "a frontend (the §2.7 authorizeSignature gate is core; it never imports cli/render)"},
+		{"internal/service/verify.go", layerCore, "a frontend (the ecrecover verify path is core; it never imports cli/render)"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(root, c.file)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("M9 file %s is missing: %v", c.file, err)
+			continue
+		}
+		for _, imp := range fileImports(t, path) {
+			to := classify(imp)
+			switch c.wantLayer {
+			case layerFrontend:
+				if to == layerProvider && providerOf(imp) != "ethunit" {
+					t.Errorf("M9 FRONTEND VIOLATION: %s imports provider %s; it must reach %s", c.file, imp, c.bannedDesc)
+				}
+				if to == layerHost {
+					t.Errorf("M9 FRONTEND VIOLATION: %s imports the host %s", c.file, imp)
+				}
+			case layerCore:
+				if to == layerFrontend {
+					t.Errorf("M9 CORE VIOLATION: %s imports frontend %s; it must not reach %s", c.file, imp, c.bannedDesc)
+				}
+			}
+		}
+	}
+}
+
 // fileImports parses one Go file and returns its direct import paths (unquoted).
 func fileImports(t *testing.T, path string) []string {
 	t.Helper()

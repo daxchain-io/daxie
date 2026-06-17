@@ -62,6 +62,77 @@ func TestCLI_ENSUnresolvedExit10(t *testing.T) {
 	}
 }
 
+// TestCLI_VerifyAddressENS drives the verify `--address <name>.eth` path end-to-end
+// against the mock ENS registry (the M9 ENS-resolved claimed-signer invariant the file
+// header documents but no test exercised). `funded` signs an EIP-191 message; the name
+// signer.eth is registered → funded's address; `verify --address signer.eth` resolves
+// the name, recovers from the signature, and reports valid:true with VerifyResult.Signer
+// echoing the RESOLVED address (not the bare name). A second name resolving to a
+// DIFFERENT address yields verify.mismatch (exit 2) — proving the comparison is against
+// the resolved 0x, never the unresolved name string.
+func TestCLI_VerifyAddressENS(t *testing.T) {
+	anvil, reg := setupENSCLI(t)
+	signer := anvil.FundedAddress() // `funded` is imported by setupAnvilCLI
+
+	// Register signer.eth → the signer's address, and other.eth → a DIFFERENT address.
+	other := common.HexToAddress("0x000000000000000000000000000000000000bEEF")
+	anvil.ENSSetAddr(t, reg, ens.Namehash("signer.eth"), signer)
+	anvil.ENSSetAddr(t, reg, ens.Namehash("other.eth"), other)
+
+	// Sign a message from `funded`.
+	const msg = "verify me via ens"
+	sout, sstderr, scode := execCLI(t, "sign", "message", msg, "--account", "funded", "--json")
+	if scode != 0 {
+		t.Fatalf("sign message: exit %d, stderr=%s", scode, sstderr)
+	}
+	var sig domain.SigResult
+	if err := json.Unmarshal([]byte(sout), &sig); err != nil {
+		t.Fatalf("sign message --json invalid: %v (%q)", err, sout)
+	}
+
+	// verify --address signer.eth ⇒ resolves to the signer, recovers a match, valid:true.
+	vout, vstderr, vcode := execCLI(t, "verify", "--message", msg,
+		"--signature", sig.Signature, "--address", "signer.eth", "--json")
+	if vcode != 0 {
+		t.Fatalf("verify --address signer.eth: exit %d, stderr=%s", vcode, vstderr)
+	}
+	var vr domain.VerifyResult
+	if err := json.Unmarshal([]byte(vout), &vr); err != nil {
+		t.Fatalf("verify --json invalid: %v (%q)", err, vout)
+	}
+	if !vr.Valid {
+		t.Errorf("verify against the ENS-resolved signer reports invalid: %+v", vr)
+	}
+	// Signer echoes the RESOLVED 0x address, not the bare name (the file-header invariant).
+	if !strings.EqualFold(vr.Signer, signer.Hex()) {
+		t.Errorf("VerifyResult.Signer = %q, want the resolved address %s (not the name)", vr.Signer, signer.Hex())
+	}
+	if !strings.EqualFold(vr.Recovered, signer.Hex()) {
+		t.Errorf("recovered = %s, want %s", vr.Recovered, signer.Hex())
+	}
+
+	// verify --address other.eth ⇒ resolves to a DIFFERENT address ⇒ mismatch (exit 2),
+	// valid:false, the recovered address surfaced.
+	mout, _, mcode := execCLI(t, "verify", "--message", msg,
+		"--signature", sig.Signature, "--address", "other.eth", "--json")
+	if mcode != int(domain.ExitUsage) {
+		t.Fatalf("verify --address other.eth exit %d, want %d (mismatch)", mcode, domain.ExitUsage)
+	}
+	var mr domain.VerifyResult
+	if err := json.Unmarshal([]byte(mout), &mr); err != nil {
+		t.Fatalf("verify mismatch must still emit a result object: %q (%v)", mout, err)
+	}
+	if mr.Valid {
+		t.Error("verify against a name resolving to a different address reports valid:true")
+	}
+	if !strings.EqualFold(mr.Signer, other.Hex()) {
+		t.Errorf("mismatch VerifyResult.Signer = %q, want the resolved other address %s", mr.Signer, other.Hex())
+	}
+	if !strings.EqualFold(mr.Recovered, signer.Hex()) {
+		t.Errorf("mismatch recovered = %s, want the real signer %s", mr.Recovered, signer.Hex())
+	}
+}
+
 // TestCLI_TxSendToENS: `daxie tx send --to name.eth` resolves + sends; the transfer
 // lands at the resolved address (the resolved address is echoed in the --json
 // result's To block before signing).
