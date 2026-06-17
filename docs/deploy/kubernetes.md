@@ -35,6 +35,11 @@ PVC but cannot write the ConfigMap, and cannot reach the anchor by any env var o
 [policy-k8s.md](policy-k8s.md) for the write ordering, the passphrase-free canary, and
 zero-outage admin-passphrase rotation.
 
+During the release-candidate phase, replace image placeholders with an exact
+published prerelease tag such as `ghcr.io/daxchain-io/daxie:1.0.0-rc.N`, or with a
+verified digest. Floating Docker tags (`:latest`, `:X.Y`) move only on stable
+releases.
+
 ---
 
 ## securityContext (the hardening)
