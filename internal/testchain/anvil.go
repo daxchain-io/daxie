@@ -6,9 +6,12 @@
 package testchain
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -50,11 +53,27 @@ type Anvil struct {
 }
 
 // Spawn starts anvil on a free port with the deterministic dev mnemonic + chain-id
-// and waits until it answers eth_chainId, registering a t.Cleanup to kill it. If
-// anvil is not on PATH it t.Skip()s — UNLESS DAXIE_IT_REQUIRE_ANVIL=1 (CI sets
-// it), in which case a missing anvil is a hard failure (the integration job must
-// actually run, not silently skip).
+// and waits until it answers eth_chainId, registering a t.Cleanup to kill it. It
+// uses anvil's default instant auto-mining (every tx mines immediately). If anvil
+// is not on PATH it t.Skip()s — UNLESS DAXIE_IT_REQUIRE_ANVIL=1 (CI sets it), in
+// which case a missing anvil is a hard failure (the integration job must actually
+// run, not silently skip).
 func Spawn(t *testing.T) *Anvil {
+	return spawn(t, false)
+}
+
+// SpawnManualMining starts anvil with --no-mining, so a submitted tx LINGERS in
+// the mempool until Mine() is called. This gives the RBF (speedup/cancel) and the
+// revert integration tests a real, controllable mempool: the test sends a tx,
+// replaces/cancels it while pending, then mines exactly one block to observe the
+// on-chain outcome — never racing anvil's auto-miner.
+func SpawnManualMining(t *testing.T) *Anvil {
+	return spawn(t, true)
+}
+
+// spawn is the shared launcher. noMining selects --no-mining (manual block
+// production via Mine) vs the default instant auto-mining.
+func spawn(t *testing.T, noMining bool) *Anvil {
 	t.Helper()
 
 	anvilBin, err := exec.LookPath("anvil")
@@ -70,15 +89,20 @@ func Spawn(t *testing.T) *Anvil {
 
 	// --silent keeps anvil's banner off the test log; a fixed mnemonic + chain-id
 	// makes the funded accounts deterministic.
-	// #nosec G204 -- test-only harness: anvilBin is the `anvil` binary located via
-	// exec.LookPath on PATH; all args are constant/test-controlled (no user input).
-	cmd := exec.Command(anvilBin,
+	args := []string{
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
 		"--chain-id", strconv.Itoa(AnvilChainID),
 		"--mnemonic", testMnemonic,
 		"--silent",
-	)
+	}
+	if noMining {
+		// --no-mining: anvil holds submitted txs in the mempool until evm_mine.
+		args = append(args, "--no-mining")
+	}
+	// #nosec G204 -- test-only harness: anvilBin is the `anvil` binary located via
+	// exec.LookPath on PATH; all args are constant/test-controlled (no user input).
+	cmd := exec.Command(anvilBin, args...)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting anvil: %v", err)
 	}
@@ -88,6 +112,68 @@ func Spawn(t *testing.T) *Anvil {
 
 	a.waitReady(t)
 	return a
+}
+
+// Mine produces exactly one block via anvil's evm_mine cheatcode, sealing whatever
+// is currently in the mempool. Used by the manual-mining tests to advance the chain
+// on demand after a send/replace/cancel.
+func (a *Anvil) Mine(t *testing.T) {
+	t.Helper()
+	a.rpc(t, "evm_mine", []any{})
+}
+
+// alwaysRevertCode is minimal EVM bytecode that REVERTs on every call/value
+// transfer: PUSH1 0x00, PUSH1 0x00, REVERT. Planting it at an address via
+// SetRevertContract makes a plain ETH send to that address revert on-chain — the
+// fixture for the deliberate-revert (exit 7) integration test (M3 tx send is
+// ETH-only with no deploy path, so the reverting target is planted, not deployed).
+const alwaysRevertCode = "0x60006000fd"
+
+// SetRevertContract plants always-reverting bytecode at addr via anvil's
+// anvil_setCode cheatcode, so any subsequent ETH send to addr reverts on
+// execution. Returns addr for convenience.
+func (a *Anvil) SetRevertContract(t *testing.T, addr common.Address) common.Address {
+	t.Helper()
+	a.rpc(t, "anvil_setCode", []any{addr.Hex(), alwaysRevertCode})
+	return addr
+}
+
+// rpc posts a single JSON-RPC call to anvil and fails the test on a transport or
+// JSON-RPC error. It is a tiny test-only client (the production adapter does not
+// expose anvil cheatcodes like evm_mine).
+func (a *Anvil) rpc(t *testing.T, method string, params []any) json.RawMessage {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": method, "params": params,
+	})
+	if err != nil {
+		t.Fatalf("rpc %s marshal: %v", method, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("rpc %s request: %v", method, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("rpc %s do: %v", method, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("rpc %s decode: %v", method, err)
+	}
+	if out.Error != nil {
+		t.Fatalf("rpc %s: %s", method, out.Error.Message)
+	}
+	return out.Result
 }
 
 // URL returns the JSON-RPC HTTP endpoint URL.

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/daxchain-io/daxie/internal/chain"
-	"github.com/daxchain-io/daxie/internal/domain"
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -124,15 +123,21 @@ func TestFake_FunctionHooks(t *testing.T) {
 	c := New()
 	ctx := context.Background()
 
-	c.SuggestFeesFn = func(ctx context.Context, speed domain.Speed) (*big.Int, *big.Int, *big.Int, error) {
-		return big.NewInt(100), big.NewInt(2), big.NewInt(49), nil
+	c.SuggestFeesFn = func(ctx context.Context, blocks int) (chain.Fees, error) {
+		return chain.Fees{
+			BaseFee:        big.NewInt(49),
+			PrioritySlow:   big.NewInt(1),
+			PriorityNormal: big.NewInt(2),
+			PriorityFast:   big.NewInt(3),
+			Source:         "fee-history",
+		}, nil
 	}
-	maxFee, prio, base, err := c.SuggestFees(ctx, domain.SpeedFast)
+	fees, err := c.SuggestFees(ctx, 20)
 	if err != nil {
 		t.Fatalf("SuggestFees: %v", err)
 	}
-	if maxFee.Int64() != 100 || prio.Int64() != 2 || base.Int64() != 49 {
-		t.Errorf("SuggestFees = (%v,%v,%v), want (100,2,49)", maxFee, prio, base)
+	if fees.BaseFee.Int64() != 49 || fees.PriorityFast.Int64() != 3 || fees.Priority(2).Int64() != 3 {
+		t.Errorf("SuggestFees = base %v fast %v, want base 49 fast 3", fees.BaseFee, fees.PriorityFast)
 	}
 
 	c.ReceiptFn = func(ctx context.Context, h common.Hash) (*types.Receipt, error) {

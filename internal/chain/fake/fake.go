@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"github.com/daxchain-io/daxie/internal/chain"
-	"github.com/daxchain-io/daxie/internal/domain"
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -50,7 +49,7 @@ type Client struct {
 
 	// Function hooks for the methods later milestones drive. When nil, the method
 	// returns a sensible zero/typed-default.
-	SuggestFeesFn     func(ctx context.Context, speed domain.Speed) (maxFee, priorityFee, baseFee *big.Int, err error)
+	SuggestFeesFn     func(ctx context.Context, blocks int) (chain.Fees, error)
 	SuggestGasPriceFn func(ctx context.Context) (*big.Int, error)
 	EstimateGasFn     func(ctx context.Context, msg ethereum.CallMsg) (uint64, error)
 	CallContractFn    func(ctx context.Context, msg ethereum.CallMsg, block *big.Int) ([]byte, error)
@@ -151,19 +150,25 @@ func (c *Client) EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64,
 	return 21000, nil
 }
 
-func (c *Client) SuggestFees(ctx context.Context, speed domain.Speed) (maxFee, priorityFee, baseFee *big.Int, err error) {
+func (c *Client) SuggestFees(ctx context.Context, blocks int) (chain.Fees, error) {
 	c.mu.Lock()
 	fn := c.SuggestFeesFn
 	e := c.Err
-	c.record("SuggestFees", speed)
+	c.record("SuggestFees", blocks)
 	c.mu.Unlock()
 	if e != nil {
-		return nil, nil, nil, e
+		return chain.Fees{}, e
 	}
 	if fn != nil {
-		return fn(ctx, speed)
+		return fn(ctx, blocks)
 	}
-	return big.NewInt(0), big.NewInt(0), big.NewInt(0), nil
+	return chain.Fees{
+		BaseFee:        big.NewInt(0),
+		PrioritySlow:   big.NewInt(0),
+		PriorityNormal: big.NewInt(0),
+		PriorityFast:   big.NewInt(0),
+		Source:         "fee-history",
+	}, nil
 }
 
 func (c *Client) SuggestGasPrice(ctx context.Context) (*big.Int, error) {

@@ -26,11 +26,40 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/daxchain-io/daxie/internal/domain"
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
+
+// Fees is the result of the single eth_feeHistory call SuggestFees folds (§5.4).
+// It carries the next-block base fee plus the three per-speed priority-fee tiers,
+// each the MEDIAN of its 25/50/90 percentile column across the sampled blocks.
+// The caller (the gas engine) selects PrioritySlow/Normal/Fast by --speed and
+// applies the max-fee formula + overrides on top — one RPC round-trip serves all
+// three speeds. BaseFee falls back to eth_gasPrice on a non-1559 chain and the
+// priority tiers fall back to eth_maxPriorityFeePerGas when feeHistory carried no
+// rewards (the §5.4 fallback ladder, folded inside the adapter); Source records
+// which rung was used so the caller can be honest about a degraded RPC.
+type Fees struct {
+	BaseFee        *big.Int // next block's base fee (feeHistory's last BaseFee entry)
+	PrioritySlow   *big.Int // median of the 25th-percentile column
+	PriorityNormal *big.Int // median of the 50th-percentile column
+	PriorityFast   *big.Int // median of the 90th-percentile column
+	Source         string   // "fee-history" | "fallback"
+}
+
+// Priority returns the priority-fee tier for the named percentile column index
+// (0=slow/25th, 1=normal/50th, 2=fast/90th); any other index returns Normal.
+func (f Fees) Priority(col int) *big.Int {
+	switch col {
+	case 0:
+		return f.PrioritySlow
+	case 2:
+		return f.PriorityFast
+	default:
+		return f.PriorityNormal
+	}
+}
 
 // Client is the RPC/chain-ops boundary (design §2.6) — THE universal test seam.
 // Every method is a thin, real go-ethereum ethclient/rpc wrapper in the
@@ -52,10 +81,17 @@ type Client interface {
 	// EstimateGas returns eth_estimateGas for msg.
 	EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64, error)
 
-	// SuggestFees folds eth_feeHistory + the --speed percentile math into ONE
-	// method, so the gas/speed policy lives in exactly one place. It returns
-	// EIP-1559 fees (maxFeePerGas, maxPriorityFeePerGas, and the latest baseFee).
-	SuggestFees(ctx context.Context, speed domain.Speed) (maxFee, priorityFee, baseFee *big.Int, err error)
+	// SuggestFees folds the SINGLE eth_feeHistory(blocks,"latest",[25,50,90]) call
+	// + the percentile/median math into ONE method, so the gas/speed policy lives in
+	// exactly one place (§5.4/§2.6). It samples `blocks` recent blocks (the
+	// gas.fee-history-blocks window, default 20), requests the binding 25/50/90
+	// percentile triple, and returns the next-block base fee plus the three
+	// per-speed priority-fee tiers, each the MEDIAN of its percentile column across
+	// the sampled blocks (not the mean, and not the latest block — a single
+	// MEV-bribe block would otherwise poison `fast`). The caller selects the tier by
+	// --speed and applies the max-fee formula/overrides on top. One RPC round-trip
+	// serves all three speeds, so `daxie gas` issues exactly one feeHistory call.
+	SuggestFees(ctx context.Context, blocks int) (Fees, error)
 
 	// SuggestGasPrice returns a legacy (pre-1559) gas price for legacy chains.
 	SuggestGasPrice(ctx context.Context) (*big.Int, error)

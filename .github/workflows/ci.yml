@@ -195,9 +195,14 @@ jobs:
       - name: anvil --version
         run: anvil --version
       - name: go test -tags integration
-        # Integration tests use the real chain adapter against a local anvil
-        # (chain-id verification + balance). CGO=1 so -race is available on the
-        # one job that talks to a real EVM; shipped binaries stay CGO_ENABLED=0.
+        # Integration tests use the real chain adapter against a local anvil:
+        # M2's chain-id verification + balance, and M3's full tx pipeline
+        # (internal/service/tx_integration_test.go service scenarios +
+        # internal/cli/tx_integration_test.go cli-level send→wait→status→list→
+        # speedup/cancel→gas). The `./...` + `-tags integration` already compiles
+        # and runs every //go:build integration file, so the M3 tx tests are
+        # covered without a new job; CGO=1 so -race is available on the one job
+        # that talks to a real EVM (shipped binaries stay CGO_ENABLED=0).
         env:
           CGO_ENABLED: "1"
         run: go test -race -tags integration ./...
@@ -223,3 +228,28 @@ jobs:
         run: |
           chmod +x docs/demos/m02.sh
           DAXIE="$PWD/daxie" docs/demos/m02.sh
+
+  demo-m03:
+    name: m03 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m03.sh unmodified
+        # The M3 tx-pipeline/gas/contacts acceptance demo (§10.1 gate): contacts
+        # add/list/show/remove; tx send→wait→status→list with exact recipient
+        # balance + nonce sequencing; speedup/cancel RBF surface (already-mined
+        # exit 9, unknown-hash exit 10); wait timeout (exit 8, resumable); gas live
+        # three-speed quote; --to a contact name resolving; --json variants; the
+        # §5.7 exit codes (0/2/8/9/10). anvil is on PATH (foundry-toolchain) so the
+        # live send/gas/RBF paths run. v0.3.0 ships the always-allow policy STUB, so
+        # no exit-3 policy assertion here (that lands in m04.sh).
+        run: |
+          chmod +x docs/demos/m03.sh
+          DAXIE="$PWD/daxie" docs/demos/m03.sh

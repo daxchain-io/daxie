@@ -4,8 +4,9 @@
 // and its own render subpackage — never a provider (the arch matrix enforces
 // this as a failing test). Business logic physically cannot live here.
 //
-// One file per noun (tx.go lands later); M0 shipped version/completion/config/
-// convert, and M1 adds wallet, account, and keystore (one file per noun).
+// One file per noun; M0 shipped version/completion/config/convert, M1 adds
+// wallet/account/keystore, M2 adds network/rpc/balance, and M3 adds tx (send/
+// status/wait/list + speedup/cancel), gas, and contacts.
 package cli
 
 import (
@@ -65,6 +66,9 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newNetworkCmd(ctx, rs),  // M2
 		newRpcCmd(ctx, rs),      // M2
 		newBalanceCmd(ctx, rs),  // M2
+		newTxCmd(ctx, rs),       // M3
+		newGasCmd(ctx, rs),      // M3
+		newContactsCmd(ctx, rs), // M3
 	)
 
 	return root

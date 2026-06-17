@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -55,6 +56,15 @@ type Options struct {
 	// is the "no secret input available" case (read-only commands, tests that
 	// pass secrets explicitly).
 	Secret SecretIO
+
+	// Sleep is the injected scheduling seam (§2.3): the determinism guard bans
+	// time.After/Sleep/NewTimer as call expressions inside internal/service, so the
+	// M3 tx pipeline's broadcast backoff + the §5.3 wait-loop poll interval block
+	// through THIS function instead — exactly as wall time flows through Clock. The
+	// cli frontend injects a real ctx-aware sleeper (time.After + ctx.Done); a nil
+	// Sleep falls back to an immediate, no-delay return (so tests run fast and the
+	// guard stays green by construction). It MUST honor ctx cancellation.
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 // SecretIO bundles the host-supplied primitives the §3.6 acquisition resolver

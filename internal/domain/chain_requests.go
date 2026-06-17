@@ -19,9 +19,10 @@ package domain
 // row is built, so RPCRow.URL is already masked when it crosses this boundary.
 
 // Speed is the gas `--speed` preset (M3 consumes it). It is declared HERE in M2,
-// not in a frontend, because chain.Client.SuggestFees takes a domain.Speed and a
-// provider (chain) must never depend on a frontend (§2.6). Declaring it now keeps
-// the chain.Client interface defined whole in M2 (§10.2) without an import cycle.
+// not in a frontend, because the gas engine selects a percentile tier from
+// chain.SuggestFees by domain.Speed and a provider (chain) must never depend on a
+// frontend (§2.6). Declaring it now keeps the chain.Client interface defined whole
+// in M2 (§10.2) without an import cycle.
 type Speed string
 
 const (

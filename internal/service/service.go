@@ -17,7 +17,10 @@ import (
 
 	"github.com/daxchain-io/daxie/internal/config"
 	"github.com/daxchain-io/daxie/internal/domain"
+	"github.com/daxchain-io/daxie/internal/journal"
 	"github.com/daxchain-io/daxie/internal/keys"
+	"github.com/daxchain-io/daxie/internal/policy"
+	"github.com/daxchain-io/daxie/internal/registry"
 )
 
 // Service is the composed daxie core. ONE per process for the CLI and the stdio
@@ -73,10 +76,42 @@ type Service struct {
 	// importing os (§2.3); the cli frontend fills them in Options.Secret.
 	secretIO SecretIO
 
-	// Later milestones add: chains ChainProvider; policy *policy.Engine;
-	// journal *journal.Journal; tokens/nfts/contacts *registry.*; ens
-	// *ens.Resolver; erc erc.Ops; fees FeeStrategy. They are absent before their
-	// milestone by design.
+	// journal is the M3 crash-safe tx journal (§5.6): JSONL + flock, one file per
+	// chain, the raw_tx-before-broadcast record + the reconciliation discriminator.
+	// It is opened lazily (creates nothing until the first append) and bound to the
+	// state dir. The §5.1 SendTx pipeline + the §5.3 wait machine + the restart
+	// reconciliation all read/write it.
+	journal *journal.Store
+
+	// nonce is the M3 nonce manager (§5.6, same package as journal): the
+	// account-lock + NextNonce=max(chainPending,localNext,journalNext) derivation +
+	// the Lease commit/abort the §5.1 ordering depends on. It shares the journal
+	// store (the journal is the source of truth for consumed nonces).
+	nonce *journal.NonceManager
+
+	// policy is the M3 guardrail engine (§4, §5.1). It ships an ALWAYS-ALLOW stub
+	// with a REAL durable reservation lifecycle (Reserve before sign, Commit on
+	// broadcast, Release on abort + the orphan reconcile surface) so the §5.1
+	// ordering + crash-safety are testable now; M4 replaces the BODY (limits/
+	// sealing/rolling-24h) WITHOUT changing any service call site. policy may NOT
+	// import journal — service bridges them in reconcile (it legally imports both).
+	policy *policy.Engine
+
+	// contacts is the M3 network-agnostic address book (§7.8): contacts
+	// add/list/show/remove + the --to name resolution. Opened lazily on the
+	// registry dir (a missing file reads as empty).
+	contacts *registry.Contacts
+
+	// sleep is the injected ctx-aware scheduling seam (§2.3): the determinism guard
+	// bans the time.After/Sleep family as call expressions in this package, so the
+	// broadcast backoff + the §5.3 poll interval block through this instead. A nil
+	// Options.Sleep falls back to immediate (no-delay) so tests run fast and the
+	// guard stays green. Production injects a real sleeper.
+	sleep func(ctx context.Context, d time.Duration) error
+
+	// Later milestones add: ens *ens.Resolver; erc erc.Ops; tokens/nfts/contracts
+	// *registry.* (token/NFT/contract registries are M5/M6/M10). They are absent
+	// before their milestone by design.
 }
 
 // Open composes the service from resolved options.
@@ -129,7 +164,37 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		return nil, err
 	}
 
-	return &Service{
+	// Open the M3 providers. All are LAZY (§7.3): journal/policy create nothing
+	// until the first append/Reserve; contacts reads a missing file as empty. So an
+	// empty environment still composes cleanly and only a tx/contacts command
+	// touches state.
+	jstore, err := journal.Open(paths.State, clock)
+	if err != nil {
+		return nil, err
+	}
+	nmgr, err := journal.NewNonceManager(paths.State, jstore)
+	if err != nil {
+		return nil, err
+	}
+	peng, err := policy.Open(paths.State, clock)
+	if err != nil {
+		return nil, err
+	}
+	cbook, err := registry.OpenContacts(paths.RegistryDir)
+	if err != nil {
+		return nil, err
+	}
+
+	sleep := opts.Sleep
+	if sleep == nil {
+		// Determinism-safe fallback: no delay. The service NEVER calls the
+		// time.After family directly (the guard bans it); a nil host sleeper means
+		// "do not block" — correct for tests and harmless in production (the cli
+		// always injects a real one).
+		sleep = noDelaySleep
+	}
+
+	s := &Service{
 		cfg:            cfg,
 		paths:          paths,
 		clock:          clock,
@@ -139,13 +204,45 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		secretIO:       opts.Secret,
 		defaultNetwork: opts.Network,
 		defaultRPC:     opts.RPC,
+		journal:        jstore,
+		nonce:          nmgr,
+		policy:         peng,
+		contacts:       cbook,
+		sleep:          sleep,
 		// The §2.8 chain provider. It is stateless (dial per call) so Open dials
 		// NOTHING here — it only captures the merged config + the per-process
 		// defaults; the first dial happens when a chain-touching use case runs. This
 		// keeps Open lazy (§7.3): an empty environment still composes cleanly and
 		// only a balance/rpc-test command reaches the network.
 		chains: newDialingProvider(cfg, opts.Network, opts.RPC),
-	}, nil
+	}
+
+	// Drive the §5.1 restart reconciliation: bridge the journal verdict to policy's
+	// orphan surface (policy may NOT import journal; service composes both). It runs
+	// offline (no RPC) — a crash-left reservation is committed iff its journal
+	// record shows a recorded broadcast, else released. It must never fail Open: a
+	// reconciliation error is surfaced but the service still opens (the next
+	// AcquireNonce reconciles again). It is a no-op on a fresh install (no
+	// reservations, no journal).
+	if rerr := s.reconcile(ctx); rerr != nil {
+		// Non-fatal: log-worthy but Open must not refuse to start because a stale
+		// reservation could not be resolved. The next send re-runs reconciliation
+		// under the account lock.
+		_ = rerr
+	}
+
+	return s, nil
+}
+
+// noDelaySleep is the determinism-safe Sleep fallback: it honors ctx
+// cancellation but otherwise returns immediately (no wall-clock dependency).
+func noDelaySleep(ctx context.Context, _ time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }
 
 // Close flushes durable state and releases file locks. M1 closes the keystore
@@ -153,6 +250,16 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 // wiring it from the start means SIGTERM-driven shutdown (§2.4) needs no later
 // change.
 func (s *Service) Close() error {
+	// Flush the M3 providers first (all no-op flushes in M3 — no long-lived fds —
+	// but wiring them now means SIGTERM-driven shutdown during a --wait needs no
+	// later change, §5.3). Errors are collected; the keystore close governs the
+	// return so a held index.lock is always released.
+	if s.journal != nil {
+		_ = s.journal.Close()
+	}
+	if s.policy != nil {
+		_ = s.policy.Close()
+	}
 	if s.keys != nil {
 		return s.keys.Close()
 	}

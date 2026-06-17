@@ -3,8 +3,8 @@ package chain
 import (
 	"context"
 	"math/big"
+	"sort"
 
-	"github.com/daxchain-io/daxie/internal/domain"
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -139,73 +139,85 @@ func (c *client) Close() {
 	}
 }
 
-// ── SuggestFees: eth_feeHistory + the --speed percentile math (one place) ─────
+// ── SuggestFees: the SINGLE eth_feeHistory(blocks,[25,50,90]) call + the
+//    percentile/median math (the one place the gas/speed policy lives, §5.4) ────
 
-// speedPercentile maps a --speed preset to the priority-fee percentile sampled
-// from eth_feeHistory. Slower → lower percentile (cheaper, more patient); faster
-// → higher percentile (pays to jump the queue). M3 owns the full gas policy;
-// this is the single source of the percentile choice the design folds into
-// SuggestFees (§2.6).
-func speedPercentile(s domain.Speed) float64 {
-	switch s {
-	case domain.SpeedSlow:
-		return 10
-	case domain.SpeedFast:
-		return 90
-	default: // SpeedNormal and any unset value
-		return 50
+// feePercentiles is the binding §5.4 percentile triple sampled in ONE
+// eth_feeHistory call: slow→25th, normal→50th, fast→90th. It is the shared
+// contract with config (slow|normal|fast → p25/p50/p90) and the test fixture.
+var feePercentiles = []float64{25, 50, 90}
+
+// defaultFeeHistoryBlocks is the fallback lookback window when the caller passes a
+// non-positive block count (it mirrors the gas.fee-history-blocks config default,
+// §5.4 — the real call site plumbs the configured value).
+const defaultFeeHistoryBlocks = 20
+
+// SuggestFees folds the SINGLE eth_feeHistory(blocks,"latest",[25,50,90]) call +
+// the percentile/median math into one method (§5.4/§2.6). It samples `blocks`
+// recent blocks, requests the binding 25/50/90 percentile triple in one
+// round-trip, and returns the next-block base fee plus the three per-speed
+// priority-fee tiers. Each tier is the MEDIAN of its percentile column across the
+// sampled blocks — NOT the mean and NOT the latest block, because a single
+// MEV-bribe block would otherwise poison `fast` (§5.4). Pure value math on
+// *big.Int — no float drift in the returned fees (the percentile is only an array
+// index into the node's own reward arrays). The caller selects the tier by
+// --speed and layers the configured multipliers/floors/caps + the max-fee formula
+// on top. One RPC serves all three speeds, so `daxie gas` issues exactly one
+// feeHistory call.
+func (c *client) SuggestFees(ctx context.Context, blocks int) (Fees, error) {
+	if blocks <= 0 {
+		blocks = defaultFeeHistoryBlocks
 	}
-}
-
-// feeHistoryBlocks is the lookback window for the priority-fee percentile sample.
-const feeHistoryBlocks = 5
-
-// SuggestFees folds eth_feeHistory + the --speed percentile math into one
-// method. It returns EIP-1559 fees: priorityFee is the chosen percentile of
-// recent tips; baseFee is the latest block base fee; maxFee = 2*baseFee +
-// priorityFee (one base-fee doubling of headroom, the conventional safe ceiling
-// for the next ~6 blocks). Pure value math on *big.Int — no float drift in the
-// returned fees (the percentile is only an array index). M3 layers the
-// configured multipliers/floors/caps on top of this primitive.
-func (c *client) SuggestFees(ctx context.Context, speed domain.Speed) (maxFee, priorityFee, baseFee *big.Int, err error) {
-	pct := speedPercentile(speed)
-	hist, err := c.ec.FeeHistory(ctx, feeHistoryBlocks, nil, []float64{pct})
+	hist, err := c.ec.FeeHistory(ctx, uint64(blocks), nil, feePercentiles)
 	if err != nil {
-		return nil, nil, nil, unreachableErr(c.opts, "feehistory", err)
+		return Fees{}, unreachableErr(c.opts, "feehistory", err)
 	}
+
+	out := Fees{Source: "fee-history"}
 
 	// baseFee: prefer the projected next-block base fee (FeeHistory.BaseFee has
 	// blockCount+1 entries, the last being the next block's base fee) and fall
 	// back to SuggestGasPrice if the node returned none (non-1559 chain).
-	baseFee = latestBaseFee(hist)
-	if baseFee == nil {
+	out.BaseFee = nextBaseFee(hist)
+	if out.BaseFee == nil {
 		gp, gerr := c.ec.SuggestGasPrice(ctx)
 		if gerr != nil {
-			return nil, nil, nil, unreachableErr(c.opts, "gasprice", gerr)
+			return Fees{}, unreachableErr(c.opts, "gasprice", gerr)
 		}
-		baseFee = gp
+		out.BaseFee = gp
+		out.Source = "fallback"
 	}
 
-	// priorityFee: the chosen percentile from the most recent block with reward
-	// data; fall back to SuggestGasTipCap when feeHistory carried no rewards.
-	priorityFee = latestReward(hist)
-	if priorityFee == nil {
+	// priority tiers: the MEDIAN of each percentile column across the sampled
+	// blocks. When feeHistory carried no reward data at all, fall back to
+	// eth_maxPriorityFeePerGas for every tier (the §5.4 fallback ladder rung).
+	out.PrioritySlow = medianColumn(hist, 0)
+	out.PriorityNormal = medianColumn(hist, 1)
+	out.PriorityFast = medianColumn(hist, 2)
+	if out.PrioritySlow == nil || out.PriorityNormal == nil || out.PriorityFast == nil {
 		tip, terr := c.ec.SuggestGasTipCap(ctx)
 		if terr != nil {
-			return nil, nil, nil, unreachableErr(c.opts, "gastip", terr)
+			return Fees{}, unreachableErr(c.opts, "gastip", terr)
 		}
-		priorityFee = tip
+		if out.PrioritySlow == nil {
+			out.PrioritySlow = new(big.Int).Set(tip)
+		}
+		if out.PriorityNormal == nil {
+			out.PriorityNormal = new(big.Int).Set(tip)
+		}
+		if out.PriorityFast == nil {
+			out.PriorityFast = new(big.Int).Set(tip)
+		}
+		out.Source = "fallback"
 	}
 
-	// maxFee = 2*baseFee + priorityFee (one base-fee-doubling of headroom).
-	maxFee = new(big.Int).Mul(baseFee, big.NewInt(2))
-	maxFee.Add(maxFee, priorityFee)
-	return maxFee, priorityFee, baseFee, nil
+	return out, nil
 }
 
-// latestBaseFee returns the projected next-block base fee from a FeeHistory, or
-// nil when the node returned no base-fee data (legacy chain).
-func latestBaseFee(h *ethereum.FeeHistory) *big.Int {
+// nextBaseFee returns the projected next-block base fee from a FeeHistory (the
+// last BaseFee entry, which is blockCount+1 long), or nil when the node returned
+// no base-fee data (legacy chain).
+func nextBaseFee(h *ethereum.FeeHistory) *big.Int {
 	if h == nil || len(h.BaseFee) == 0 {
 		return nil
 	}
@@ -216,17 +228,26 @@ func latestBaseFee(h *ethereum.FeeHistory) *big.Int {
 	return new(big.Int).Set(last)
 }
 
-// latestReward returns the most recent non-nil priority-fee sample (the single
-// requested percentile) from a FeeHistory, or nil when no rewards were returned.
-func latestReward(h *ethereum.FeeHistory) *big.Int {
+// medianColumn returns the MEDIAN of column `col` (one of the three requested
+// percentiles) across every sampled block's reward row, or nil when no block
+// carried a value for that column. The median (not the mean) is the §5.4 defense
+// against a single MEV-bribe block poisoning the estimate. For an even count it
+// takes the lower of the two middle values (a conservative, deterministic choice —
+// no averaging, no float).
+func medianColumn(h *ethereum.FeeHistory, col int) *big.Int {
 	if h == nil {
 		return nil
 	}
-	for i := len(h.Reward) - 1; i >= 0; i-- {
-		row := h.Reward[i]
-		if len(row) > 0 && row[0] != nil {
-			return new(big.Int).Set(row[0])
+	vals := make([]*big.Int, 0, len(h.Reward))
+	for _, row := range h.Reward {
+		if col < len(row) && row[col] != nil {
+			vals = append(vals, new(big.Int).Set(row[col]))
 		}
 	}
-	return nil
+	if len(vals) == 0 {
+		return nil
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i].Cmp(vals[j]) < 0 })
+	// Lower-middle for even counts: index (n-1)/2 — deterministic, no averaging.
+	return vals[(len(vals)-1)/2]
 }
