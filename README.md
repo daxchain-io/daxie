@@ -50,6 +50,15 @@ branch on.
 Four supported paths. **Verify before you run** (see [docs/install.md](docs/install.md)
 for the download-verify-run recipe and cosign signature verification).
 
+> **While `v1.0.0-rc.1` is the newest tag,** the *floating* install channels
+> resolve to **stable releases only** — they will not see a release candidate.
+> That covers Homebrew, the `curl | sh` `/releases/latest` URL, the `:latest` and
+> `:1.0` Docker tags, and `go install` with `@latest`. Until stable `v1.0.0`
+> ships, pin the prerelease explicitly: the
+> [`v1.0.0-rc.1` release assets](https://github.com/daxchain-io/daxie/releases/tag/v1.0.0-rc.1),
+> the `ghcr.io/daxchain-io/daxie:1.0.0-rc.1` image, or `@v1.0.0-rc.1` for
+> `go install`. The commands below document the stable-channel forms.
+
 ### Homebrew (macOS / Linux)
 
 ```sh
@@ -130,10 +139,10 @@ daxie tx send --to 0xRecipient... --amount 0.05 --wait --json --yes
 daxie mcp serve
 ```
 
-Exit codes are stable and agent-branchable: `0` ok, `3` policy-denied, `5`
-insufficient funds, `6` network, `7` reverted, `8` timeout-pending **or** seal
-violation, `9` nonce/replacement conflict. Full table in the
-[command surface](#command-surface).
+Exit codes are stable and agent-branchable — the ones you'll branch on most: `0`
+ok, `3` policy-denied, `5` insufficient funds, `6` network, `7` reverted, `8`
+timeout-pending **or** seal violation, `9` nonce/replacement conflict. The full
+`0`–`12` table is in the [command surface](#command-surface).
 
 ---
 
@@ -336,8 +345,9 @@ deployment. Pin exact versions or image digests in production.
 
 Every change must keep the gate green: unit tests on the 3-OS matrix, the anvil
 integration suite, `goreleaser build --snapshot` for all six targets, golangci-lint
-(incl. the depguard frontend/leaf matrix and go-arch-lint), and the checked-in
-`docs/demos/mNN.sh` walkthroughs running unmodified. The design in
+(incl. the depguard frontend/leaf matrix), the architecture guard in
+`internal/arch_test.go`, and the checked-in `docs/demos/mNN.sh` walkthroughs
+running unmodified. The design in
 [docs/design.md](docs/design.md) is the source of truth.
 
 ## License
