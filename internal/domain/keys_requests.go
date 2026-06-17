@@ -34,7 +34,7 @@ package domain
 // WalletCreateRequest creates a new HD wallet and auto-derives account 0.
 type WalletCreateRequest struct {
 	Name  string `json:"name" jsonschema:"wallet name; grammar [a-z0-9][a-z0-9_-]{0,63}, reserved chars / # . forbidden"`
-	Words int    `json:"words,omitempty" jsonschema:"type=integer,enum=12,enum=24; mnemonic length, default 12"`
+	Words int    `json:"words,omitempty" jsonschema:"mnemonic length, 12 or 24; default 12"`
 	Yes   bool   `json:"-"` // CLI-only non-interactive confirm gate; excluded from the MCP schema.
 }
 
@@ -160,7 +160,7 @@ type AccountSummary struct {
 // index; an explicit Index re-derives (idempotent) a specific one.
 type AccountDeriveRequest struct {
 	Wallet string  `json:"wallet" jsonschema:"the HD wallet name to derive from"`
-	Index  *uint32 `json:"index,omitempty" jsonschema:"type=integer,minimum=0; omit to derive next"`
+	Index  *uint32 `json:"index,omitempty" jsonschema:"omit to derive next"`
 	Name   string  `json:"name,omitempty" jsonschema:"optional alias to set in one step; not purely numeric"`
 	Yes    bool    `json:"-"`
 }

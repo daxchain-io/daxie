@@ -251,9 +251,17 @@ func newTokenApproveCmd(ctx context.Context, rs *rootState) *cobra.Command {
 				From:      resolveFrom(rs, from),
 				Network:   rs.flags.Network,
 				RPC:       rs.flags.RPC,
-				Confirm:   rs.flags.Yes,
-				Yes:       rs.flags.Yes,
-				Wait:      w,
+				Yes:       rs.flags.Yes, // TTY-skip only (json:"-")
+				// AckUnlimited is the §4.2 unlimited acknowledgement. On the `token approve`
+				// CLI the acking part is --yes (the design's "--unlimited --yes" ceremony):
+				// the user explicitly asked for unlimited (--unlimited) OR typed a sentinel
+				// --amount, and --yes acknowledges it. The early guard above already refuses
+				// an explicit --unlimited WITHOUT --yes; the service only consumes acked when
+				// the approval is actually unlimited (flag OR sentinel amount), so this is a
+				// no-op for a bounded approve. (contract_send differs: there the opaque
+				// calldata's ack is the DELIBERATE --unlimited flag, not the routine --yes.)
+				AckUnlimited: rs.flags.Yes,
+				Wait:         w,
 			}
 			svc, closeFn, err := openService(ctx, rs)
 			if err != nil {
@@ -297,8 +305,7 @@ func newTokenRevokeCmd(ctx context.Context, rs *rootState) *cobra.Command {
 				From:    resolveFrom(rs, from),
 				Network: rs.flags.Network,
 				RPC:     rs.flags.RPC,
-				Confirm: rs.flags.Yes,
-				Yes:     rs.flags.Yes,
+				Yes:     rs.flags.Yes, // TTY-skip only; a revoke is never unlimited (no ack needed)
 				Wait:    w,
 			}
 			svc, closeFn, err := openService(ctx, rs)

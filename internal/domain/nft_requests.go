@@ -225,7 +225,7 @@ type NFTSendRequest struct {
 	DryRun bool `json:"dry_run,omitempty"`
 	// Confirm is the agent-facing TTY-confirmation skip (like tx send / token
 	// approve). An NFT send has no unlimited ceremony.
-	Confirm bool `json:"confirm" jsonschema:"default=false"`
+	Confirm bool `json:"confirm" jsonschema:"send without an interactive confirmation; defaults to false"`
 	// Yes is the CLI-only TTY-skip mirror, excluded from the MCP schema (json:"-").
 	Yes  bool     `json:"-"`
 	Wait WaitOpts `json:"wait,omitempty"`

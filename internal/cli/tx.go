@@ -170,8 +170,7 @@ func newTxSendCmd(ctx context.Context, rs *rootState) *cobra.Command {
 				Network: rs.flags.Network,
 				RPC:     rs.flags.RPC,
 				DryRun:  dryRun,
-				Confirm: rs.flags.Yes, // --yes skips the TTY confirm (the agent escape hatch)
-				Yes:     rs.flags.Yes,
+				Yes:     rs.flags.Yes, // --yes skips the TTY confirm (the agent escape hatch; json:"-" — never on the MCP wire)
 				Wait:    w,
 			}
 			gf.apply(cmd, &req)

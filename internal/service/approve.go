@@ -155,7 +155,7 @@ func (s *Service) resolveApproveIntent(ctx context.Context, p domain.Principal, 
 		policyKind: policyKindApprove,   // routes the Check to KindApprove
 		tokenAmt:   new(big.Int).Set(amount),
 		unlimited:  unlimited,
-		acked:      req.Confirm, // the --unlimited --yes ceremony bit (also the bounded-confirm skip)
+		acked:      req.AckUnlimited, // the explicit unlimited-approval acknowledgement (§4.2/§6.3); DISTINCT from the TTY-skip (req.Yes)
 		kind:       journal.KindApprove,
 		asset: journal.Asset{
 			Kind:     "erc20",

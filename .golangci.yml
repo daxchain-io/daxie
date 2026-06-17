@@ -150,6 +150,24 @@ linters:
         linters:
           - gosec
           - errcheck
+      # The MCP frontend-parity test (§2.9) is the SINGLE load-bearing test seam that
+      # drives the real chain fake through the shared *service.Service: it must import
+      # config (the service.ChainProvider interface speaks config.Endpoint) and
+      # chain/chain.fake (the recording provider + the fake client) to compare the
+      # materialized request both frontends produce. The AUTHORITATIVE import-matrix law
+      # (internal/arch_test.go, which inspects non-test imports) governs the production
+      # split; this _test.go provider use is the sanctioned §2.9 seam and is exempt from
+      # the depguard SUBSET belt, exactly as the integration test fakes are.
+      - path: internal/cli/mcp_parity_test\.go
+        linters:
+          - depguard
+      # descriptions.go is PURE agent-facing prose: 31 string constants describing each
+      # MCP tool. gosec's G101 hardcoded-credential heuristic false-positives on the
+      # tokens of these sentences (e.g. "token", "approve") — there is no code and no
+      # secret, only documentation strings. Exempt this one file from gosec.
+      - path: internal/mcpserver/tools/descriptions\.go
+        linters:
+          - gosec
 
 formatters:
   enable:

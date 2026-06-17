@@ -28,8 +28,22 @@ func openService(ctx context.Context, rs *rootState) (*service.Service, func(), 
 	if err != nil {
 		return nil, func() {}, err
 	}
+	// TEST-ONLY seam (nil in production): the §2.9 frontend-parity proof drives the REAL
+	// cobra command end-to-end against an injected recording chain provider. Production
+	// never sets this, so the branch is dead in the shipped binary; a test sets it to
+	// swap svc.chains so the CLI arm of the parity comparison exercises the actual
+	// newTxSendCmd RunE (resolveFrom, gas/wait binding, the request struct it builds) and
+	// the same svc.SendTx the MCP arm hits — the two arms are both real frontends.
+	if testOpenServiceHook != nil {
+		testOpenServiceHook(svc)
+	}
 	return svc, func() { _ = svc.Close() }, nil
 }
+
+// testOpenServiceHook is the nil-in-production parity-test seam openService invokes on
+// the freshly-opened service (see openService). It is set ONLY by frontend-parity tests
+// and reset in their cleanup; it never runs in the shipped binary.
+var testOpenServiceHook func(*service.Service)
 
 // buildServiceOptions assembles the service.Options the frontend hands the core: the
 // real wall clock, the real ctx-aware scheduling sleeper (so the §5.8 receive poll

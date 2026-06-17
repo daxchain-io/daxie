@@ -78,7 +78,7 @@ func TestIntegration_TokenApproveAllowanceRevoke(t *testing.T) {
 	// approve spender 250 TST.
 	if _, err := svc.TokenApprove(context.Background(), domain.LocalCLI(), domain.ApproveRequest{
 		Token: "tst", Spender: spender.Hex(), Amount: "250", From: "funded", Network: "localanvil",
-		Yes: true, Confirm: true, Wait: domain.WaitOpts{Enabled: true},
+		Yes: true, Wait: domain.WaitOpts{Enabled: true},
 	}, nil); err != nil {
 		t.Fatalf("TokenApprove: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestIntegration_TokenApproveAllowanceRevoke(t *testing.T) {
 	// revoke → allowance 0.
 	if _, err := svc.TokenRevoke(context.Background(), domain.LocalCLI(), domain.ApproveRequest{
 		Token: "tst", Spender: spender.Hex(), From: "funded", Network: "localanvil",
-		Yes: true, Confirm: true, Wait: domain.WaitOpts{Enabled: true},
+		Yes: true, Wait: domain.WaitOpts{Enabled: true},
 	}, nil); err != nil {
 		t.Fatalf("TokenRevoke: %v", err)
 	}

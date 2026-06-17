@@ -82,7 +82,7 @@ func (s *Service) SignTyped(ctx context.Context, p domain.Principal, req domain.
 		return domain.SigResult{}, cerr
 	}
 
-	if aerr := s.authorizeSignature(ctx, p, &td, from, network, chainID, req.Acked); aerr != nil {
+	if aerr := s.authorizeSignature(ctx, p, &td, from, network, chainID, req.AckUnlimited); aerr != nil {
 		return domain.SigResult{}, aerr // policy.denied.* (exit 3) — REFUSE before SignHash
 	}
 

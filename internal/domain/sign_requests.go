@@ -29,11 +29,11 @@ package domain
 // endpoint only for the unified result echo + the `messages` kill-switch read; EIP-191
 // needs no chainId (there is no chainId in the prefix).
 type SignMessageRequest struct {
-	Account string
-	Message []byte // raw message bytes, OR the 32-byte digest when NoHash
-	NoHash  bool
-	Network string
-	RPC     string
+	Account string `json:"account,omitempty" jsonschema:"signing account ref; omit to use the default account"`
+	Message []byte `json:"message" jsonschema:"the message to sign; raw bytes (base64 over MCP), or the 32-byte digest when no_hash is true"`
+	NoHash  bool   `json:"no_hash,omitempty" jsonschema:"true when 'message' is a pre-hashed 32-byte digest; the EIP-191 prefix is STILL applied (raw eth_sign is never offered)"`
+	Network string `json:"network,omitempty" jsonschema:"network override; empty = the configured default"`
+	RPC     string `json:"rpc,omitempty" jsonschema:"RPC endpoint override; empty = the configured default"`
 }
 
 // SignTypedRequest is `daxie sign typed` (EIP-712). Typed is the raw JSON bytes of an
@@ -41,14 +41,17 @@ type SignMessageRequest struct {
 // signer. The active network's chainId is fetched by the core to drive the §4.2
 // chain-mismatch deny (a permit for chain 1 signed "while on Sepolia").
 type SignTypedRequest struct {
-	Account string
-	Typed   []byte // raw EIP-712 JSON
-	Network string
-	RPC     string
-	// Acked is the --unlimited --yes ceremony bit for a recognized UNLIMITED permit
-	// (mirrors ApproveRequest.Confirm). Without it an unlimited permit is refused with
-	// policy.denied.unlimited_unacked (§4.3 stage 6).
-	Acked bool
+	Account string `json:"account,omitempty" jsonschema:"signing account ref; omit to use the default account"`
+	Typed   []byte `json:"typed" jsonschema:"the EIP-712 typed-data document as raw JSON (base64 over MCP)"`
+	Network string `json:"network,omitempty" jsonschema:"network override; empty = the configured default"`
+	RPC     string `json:"rpc,omitempty" jsonschema:"RPC endpoint override; empty = the configured default"`
+	// AckUnlimited is the unlimited-acknowledgement for a recognized UNLIMITED permit
+	// (EIP-2612 / DAI / Permit2). It is the ONE named field shared across
+	// ApproveRequest/SignTypedRequest/ContractSendRequest (the §6 reconciliation note),
+	// mapped to Check.Acked. Without it an unlimited permit is refused with
+	// policy.denied.unlimited_unacked (§4.3 stage 6). The CLI binds it from --unlimited
+	// --yes; the MCP acknowledge_unlimited schema field carries it — never frontend-set.
+	AckUnlimited bool `json:"acknowledge_unlimited,omitempty" jsonschema:"Required when the approval is UNLIMITED. Grants the spender an unbounded allowance. Omit unless that is the explicit intent."`
 }
 
 // VerifyRequest is `daxie verify`. Exactly one of Message/Typed is set. Signature is
@@ -56,13 +59,13 @@ type SignTypedRequest struct {
 // ENS name (resolved, then compared, §10.2). NoHash applies to the Message path (the
 // message is a pre-hashed 32-byte digest, the EIP-191 prefix is still applied).
 type VerifyRequest struct {
-	Message   []byte // EIP-191 path (raw bytes, or the 32-byte digest when NoHash)
-	Typed     []byte // EIP-712 path (raw JSON)
-	NoHash    bool
-	Signature string // 0x… 65-byte
-	Address   string // 0x… or name.eth
-	Network   string
-	RPC       string
+	Message   []byte `json:"message,omitempty" jsonschema:"EIP-191 path: the message bytes that were signed (base64 over MCP), or the 32-byte digest when no_hash is true"`
+	Typed     []byte `json:"typed,omitempty" jsonschema:"EIP-712 path: the typed-data document as raw JSON (base64 over MCP)"`
+	NoHash    bool   `json:"no_hash,omitempty" jsonschema:"true when 'message' is a pre-hashed 32-byte digest; the EIP-191 prefix is STILL applied"`
+	Signature string `json:"signature" jsonschema:"the 0x-hex 65-byte [R||S||V] signature to verify"`
+	Address   string `json:"address" jsonschema:"the claimed signer: a 0x address or an ENS name (resolved, then compared)"`
+	Network   string `json:"network,omitempty" jsonschema:"network override; empty = the configured default"`
+	RPC       string `json:"rpc,omitempty" jsonschema:"RPC endpoint override; empty = the configured default"`
 }
 
 // SigResult is the sign output: the 65-byte signature, the signer address, the digest

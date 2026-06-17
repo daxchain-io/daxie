@@ -580,6 +580,114 @@ func TestM10ContractFilesOnCorrectSide(t *testing.T) {
 	}
 }
 
+// TestM11McpServerFilesOnCorrectSide pins the M11 MCP-server files explicitly onto
+// the FRONTEND side of the import matrix (design §1a/§2.2/§6.1), per-FILE rather than
+// per-package, so a future edit that, say, makes a tool handler reach a provider (the
+// policy engine to "just check a limit", the keys backend to "just read an address",
+// the chain client to "just fetch one balance") goes red here even if the package as a
+// whole still has a legitimate import via another file.
+//
+// This is the executable enforcement of the §6 central guarantee: mcpserver is
+// Frontend 2 — a THIN host that imports service+domain(+version) ONLY and therefore
+// physically CANNOT contain business logic (the provider types a guardrail bypass
+// would need are not importable). A prompt-injected agent cannot raise its own limits,
+// exfiltrate a key, or skip a policy check through the tool channel because every tool
+// routes through the SAME svc.* method the CLI calls — the only path to domain.Signer,
+// with policy.Reserve + the seal/allowlist/gas-cap/unlimited checks INSIDE it (§6.4).
+//
+//   - mcpserver/server.go, mcpserver/transport_http.go, mcpserver/errors.go,
+//     mcpserver/progress.go, mcpserver/principal.go are FRONTEND core files: they may
+//     import service + domain + version + the MCP SDK + net/http/crypto/tls (the
+//     reserved v1.1 transport seam, §6.8) — never a provider (not policy, not keys,
+//     not chain, not erc, not ens, not registry, not journal, not abi).
+//   - mcpserver/tools/register.go, .../read.go, .../write.go, .../stream.go,
+//     .../pure.go are FRONTEND tool-handler files: each handler is args → ONE service
+//     method → result; it may import service + domain + the MCP SDK — never a provider.
+//     The write.go guard is load-bearing: the signing tools (send/token_approve/
+//     contract_send) are exactly where a guardrail bypass would be attempted; this
+//     file MUST NOT reach policy/keys/chain.
+//   - cli/mcp.go + cli/render/mcp.go are FRONTEND files: the `mcp serve|tools`
+//     command + the §6.7 table renderer. mcp.go is the ONE sanctioned cli→mcpserver
+//     edge (the host calls cli.Execute; cli builds mcpserver.New(svc)); it imports
+//     service + domain + mcpserver (a cross-frontend edge, allowed) — never a provider.
+//
+// The package-level TestImportMatrix already enforces the same law (and the
+// cli→mcpserver cross-frontend edge is sanctioned there); this adds the load-bearing
+// per-FILE regression guard for the second-frontend boundary M11 introduces. The
+// guard engages once the milestone authors each file (a missing file is a hard error,
+// since M11 must ship them).
+func TestM11McpServerFilesOnCorrectSide(t *testing.T) {
+	root := moduleRoot(t)
+	cases := []struct {
+		file       string // module-relative path
+		wantLayer  layer
+		bannedDesc string
+	}{
+		{"internal/mcpserver/server.go", layerFrontend, "a provider (the transport-agnostic Server is a thin frontend; it imports service+domain+version+the MCP SDK only — never policy/keys/chain)"},
+		{"internal/mcpserver/transport_http.go", layerFrontend, "a provider (the reserved v1.1 HTTP/auth seam imports net/http+crypto/tls+domain — never a provider)"},
+		{"internal/mcpserver/errors.go", layerFrontend, "a provider (the §6.6 domain.Error→tool-error mapping imports domain only — never a provider)"},
+		{"internal/mcpserver/tools/register.go", layerFrontend, "a provider (the 31-tool registration table is a thin frontend; handlers call svc.* — they never import policy/keys/chain)"},
+		{"internal/mcpserver/tools/helpers.go", layerFrontend, "a provider (the read/write tool-handler wrappers call svc.* — they never import a provider)"},
+		{"internal/mcpserver/tools/write.go", layerFrontend, "a provider (the SIGNING tool handlers are where a guardrail bypass would be attempted; they MUST route through svc.* and NEVER import policy/keys/chain)"},
+		{"internal/mcpserver/tools/progress.go", layerFrontend, "a provider (the §6.5 EventSink→NotifyProgress bridge imports domain+the SDK only — never a provider)"},
+		{"internal/cli/mcp.go", layerFrontend, "a provider (the `mcp serve|tools` command is a thin host; it builds mcpserver.New(svc) — the one sanctioned cli→mcpserver edge — and never imports a provider)"},
+		{"internal/cli/render/mcp.go", layerFrontend, "a provider (the §6.7 `mcp tools` table renderer formats only; it imports domain, never a provider)"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(root, c.file)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("M11 file %s is missing: %v", c.file, err)
+			continue
+		}
+		for _, imp := range fileImports(t, path) {
+			to := classify(imp)
+			switch c.wantLayer {
+			case layerFrontend:
+				// A frontend file may not import a provider (ethunit excepted for output).
+				if to == layerProvider && providerOf(imp) != "ethunit" {
+					t.Errorf("M11 FRONTEND VIOLATION: %s imports provider %s; it must reach %s", c.file, imp, c.bannedDesc)
+				}
+				if to == layerHost {
+					t.Errorf("M11 FRONTEND VIOLATION: %s imports the host %s", c.file, imp)
+				}
+				if to == layerCore && c.file == "internal/cli/render/mcp.go" {
+					// The render file formats domain structs; it never reaches the core.
+					t.Errorf("M11 FRONTEND VIOLATION: %s imports the core %s; a renderer imports domain only", c.file, imp)
+				}
+			}
+		}
+	}
+
+	// Package-level reinforcement: NO file in internal/mcpserver or
+	// internal/mcpserver/tools may import ANY provider package. The per-file cases
+	// above pin the load-bearing files by name; this sweep catches a provider import
+	// landing in any OTHER mcpserver file a future edit adds (the whole second
+	// frontend stays thin, not just the named files). It is the package-level twin of
+	// the abi leaf-purity sweep in TestM10ContractFilesOnCorrectSide.
+	for _, dirRel := range []string{"internal/mcpserver", "internal/mcpserver/tools"} {
+		dir := filepath.Join(root, dirRel)
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("M11: %s is missing: %v", dirRel, err)
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("reading %s: %v", dirRel, err)
+		}
+		for _, e := range entries {
+			fn := e.Name()
+			if e.IsDir() || !strings.HasSuffix(fn, ".go") || strings.HasSuffix(fn, "_test.go") {
+				continue
+			}
+			for _, imp := range fileImports(t, filepath.Join(dir, fn)) {
+				if classify(imp) == layerProvider && providerOf(imp) != "ethunit" {
+					t.Errorf("M11 SECOND-FRONTEND VIOLATION: %s/%s imports provider %s; mcpserver is a thin frontend that imports service+domain(+version,+the MCP SDK) ONLY — a tool handler cannot import a provider, so it physically cannot skip a guardrail (§1a, §6.4)", dirRel, fn, imp)
+				}
+			}
+		}
+	}
+}
+
 // fileImports parses one Go file and returns its direct import paths (unquoted).
 func fileImports(t *testing.T, path string) []string {
 	t.Helper()

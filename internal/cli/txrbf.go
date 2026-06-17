@@ -64,8 +64,7 @@ func newTxSpeedupCmd(ctx context.Context, rs *rootState) *cobra.Command {
 				Speed:       f.speed,
 				Network:     rs.flags.Network,
 				RPC:         rs.flags.RPC,
-				Yes:         rs.flags.Yes,
-				Confirm:     rs.flags.Yes,
+				Yes:         rs.flags.Yes, // TTY-skip only (json:"-")
 				Wait:        w,
 			}
 			svc, closeFn, err := openService(ctx, rs)
@@ -108,8 +107,7 @@ func newTxCancelCmd(ctx context.Context, rs *rootState) *cobra.Command {
 				Speed:       f.speed,
 				Network:     rs.flags.Network,
 				RPC:         rs.flags.RPC,
-				Yes:         rs.flags.Yes,
-				Confirm:     rs.flags.Yes,
+				Yes:         rs.flags.Yes, // TTY-skip only (json:"-")
 				Wait:        w,
 			}
 			svc, closeFn, err := openService(ctx, rs)

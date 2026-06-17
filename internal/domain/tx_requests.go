@@ -34,9 +34,9 @@ import "github.com/ethereum/go-ethereum/common"
 //	--yes                  → Yes (CLI-only TTY confirmation skip — NOT a safety ack)
 //	--wait/--confirmations/--timeout → Wait
 type TxRequest struct {
-	From   string `json:"from" jsonschema:"account ref; defaults to the active account"`
+	From   string `json:"from,omitempty" jsonschema:"account ref; defaults to the active account"`
 	To     string `json:"to" jsonschema:"address, ENS name, or contact"`
-	Amount string `json:"amount" jsonschema:"e.g. 0.5 (ETH) or 100 (token base units)"`
+	Amount string `json:"amount,omitempty" jsonschema:"e.g. 0.5 (ETH) or 100 (token base units)"`
 	Token  string `json:"token,omitempty" jsonschema:"registry alias or contract; omit for ETH"`
 
 	GasLimit    string  `json:"gas_limit,omitempty"`
@@ -45,18 +45,20 @@ type TxRequest struct {
 	GasPrice    string  `json:"gas_price,omitempty"` // --legacy only
 	Speed       string  `json:"speed,omitempty"`     // slow|normal|fast
 	Legacy      bool    `json:"legacy,omitempty"`
-	Nonce       *uint64 `json:"nonce,omitempty" jsonschema:"type=integer,minimum=0"`
+	Nonce       *uint64 `json:"nonce,omitempty" jsonschema:"manual nonce (advanced); omit to auto-derive"`
 
 	Network string `json:"network,omitempty"`
 	RPC     string `json:"rpc,omitempty"`
 
 	DryRun bool `json:"dry_run,omitempty"`
 
-	// Confirm is the --yes gate as the agent-facing field: MCP default false,
-	// declared not inferred (a tool must opt in to send). It is the
-	// confirmation-skip switch, NOT a safety acknowledgement (§5.1).
-	Confirm bool `json:"confirm" jsonschema:"default=false"`
-	// Yes is the CLI-only TTY-skip mirror, excluded from the MCP schema (json:"-").
+	// Yes is the interactive-confirmation-skip flag — a CLI-interaction concern, NEVER
+	// a safety acknowledgement (§5.1). It carries json:"-" so the SDK never infers it
+	// into the MCP schema (design §6.2: "TxRequest.Yes carries json:\"-\"…it is a
+	// CLI-interaction flag"). The CLI binds it from --yes; the MCP write ceremony wires
+	// it constant-true (the interactive y/N cannot exist over a tool call — §6.4). The
+	// unlimited-approval ack is a SEPARATE, schema-visible field on the approval
+	// requests (acknowledge_unlimited), never this flag.
 	Yes bool `json:"-"`
 
 	Wait WaitOpts `json:"wait,omitempty"`
@@ -67,8 +69,8 @@ type TxRequest struct {
 // zero Timeout ⇒ the tx.wait-timeout default (10m).
 type WaitOpts struct {
 	Enabled       bool     `json:"enabled,omitempty"`
-	Confirmations *uint64  `json:"confirmations,omitempty" jsonschema:"type=integer,minimum=0"`
-	Timeout       Duration `json:"timeout,omitempty" jsonschema:"type=string,format=duration"`
+	Confirmations *uint64  `json:"confirmations,omitempty" jsonschema:"target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)"`
+	Timeout       Duration `json:"timeout,omitempty" jsonschema:"Go duration string, e.g. 5m; omit = default 10m"`
 }
 
 // TxResult is the §5.2 send/status/wait result. AmountWei is the canonical wei
@@ -193,8 +195,8 @@ type TxStatusRequest struct {
 // tx.wait-timeout default.
 type WaitRequest struct {
 	Hash          string   `json:"hash"`
-	Confirmations *uint64  `json:"confirmations,omitempty" jsonschema:"type=integer,minimum=0"`
-	Timeout       Duration `json:"timeout,omitempty" jsonschema:"type=string,format=duration"`
+	Confirmations *uint64  `json:"confirmations,omitempty" jsonschema:"target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)"`
+	Timeout       Duration `json:"timeout,omitempty" jsonschema:"Go duration string, e.g. 5m; omit = default 10m"`
 	Network       string   `json:"network,omitempty"`
 	RPC           string   `json:"rpc,omitempty"`
 }
@@ -243,11 +245,12 @@ type SpeedupRequest struct {
 	GasPrice    string `json:"gas_price,omitempty"`
 	Speed       string `json:"speed,omitempty"`
 
-	Network string   `json:"network,omitempty"`
-	RPC     string   `json:"rpc,omitempty"`
-	Yes     bool     `json:"-"`
-	Confirm bool     `json:"confirm" jsonschema:"default=false"`
-	Wait    WaitOpts `json:"wait,omitempty"`
+	Network string `json:"network,omitempty"`
+	RPC     string `json:"rpc,omitempty"`
+	// Yes is the confirmation-skip flag (CLI --yes; MCP-ceremony constant-true). It is
+	// json:"-" so the SDK never infers it into the MCP schema (§6.2).
+	Yes  bool     `json:"-"`
+	Wait WaitOpts `json:"wait,omitempty"`
 }
 
 // CancelRequest replaces a pending tx with a 0-value self-send (to=from, gas
@@ -259,11 +262,12 @@ type CancelRequest struct {
 	GasPrice    string `json:"gas_price,omitempty"`
 	Speed       string `json:"speed,omitempty"`
 
-	Network string   `json:"network,omitempty"`
-	RPC     string   `json:"rpc,omitempty"`
-	Yes     bool     `json:"-"`
-	Confirm bool     `json:"confirm" jsonschema:"default=false"`
-	Wait    WaitOpts `json:"wait,omitempty"`
+	Network string `json:"network,omitempty"`
+	RPC     string `json:"rpc,omitempty"`
+	// Yes is the confirmation-skip flag (CLI --yes; MCP-ceremony constant-true). It is
+	// json:"-" so the SDK never infers it into the MCP schema (§6.2).
+	Yes  bool     `json:"-"`
+	Wait WaitOpts `json:"wait,omitempty"`
 }
 
 // AbandonRequest voids a signed-never-broadcast record (the §5.6 escape hatch):

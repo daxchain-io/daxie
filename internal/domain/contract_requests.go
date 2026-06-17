@@ -86,21 +86,24 @@ type ContractSendRequest struct {
 	GasPrice    string  `json:"gas_price,omitempty"`
 	Speed       string  `json:"speed,omitempty"`
 	Legacy      bool    `json:"legacy,omitempty"`
-	Nonce       *uint64 `json:"nonce,omitempty" jsonschema:"type=integer,minimum=0"`
+	Nonce       *uint64 `json:"nonce,omitempty" jsonschema:"manual nonce (advanced); omit to auto-derive"`
 	Network     string  `json:"network,omitempty"`
 	RPC         string  `json:"rpc,omitempty"`
 	DryRun      bool    `json:"dry_run,omitempty"`
-	Confirm     bool    `json:"confirm" jsonschema:"default=false"` // the --yes gate; MCP default false
-	Yes         bool    `json:"-"`                                  // CLI-only TTY skip; excluded from MCP schema
+	// Yes is the interactive-confirmation-skip flag (CLI --yes; MCP-ceremony
+	// constant-true). It is json:"-" so the SDK never infers it into the MCP schema
+	// (§6.2) — a CLI-interaction concern, NEVER the unlimited acknowledgement.
+	Yes bool `json:"-"`
 	// AckUnlimited is the SEPARATE deliberate unlimited-approval acknowledgement — the
-	// CLI --unlimited flag, the MCP acknowledgeUnlimited field — mapped straight to
-	// Check.Acked (§4.2 line 1561). It is DISTINCT from Confirm/Yes: --yes only skips the
+	// CLI --unlimited flag, the MCP acknowledge_unlimited field — mapped straight to
+	// Check.Acked (§4.2 line 1561). It is DISTINCT from Yes: --yes only skips the
 	// TTY confirmation, while AckUnlimited is the deliberate "I accept an infinite
 	// allowance" bit. A `contract send` whose calldata classifies as an unlimited
 	// approve/setApprovalForAll/permit sentinel without AckUnlimited is denied
 	// policy.denied.unlimited_unacked (exit 3) — EXACTLY like `token approve --unlimited`,
-	// so the generic noun cannot silently defeat the typed ceremony (§11 D12).
-	AckUnlimited bool     `json:"acknowledge_unlimited,omitempty" jsonschema:"default=false"`
+	// so the generic noun cannot silently defeat the typed ceremony (§11 D12). One named
+	// field across ApproveRequest/SignTypedRequest/ContractSendRequest (§6 reconciliation).
+	AckUnlimited bool     `json:"acknowledge_unlimited,omitempty" jsonschema:"Required when the calldata classifier detects an UNLIMITED approve/permit. Grants the spender an unbounded allowance. Omit unless that is the explicit intent."`
 	Wait         WaitOpts `json:"wait,omitempty"`
 }
 

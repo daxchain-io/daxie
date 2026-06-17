@@ -45,13 +45,13 @@ type ReceiveRequest struct {
 	NFT string `json:"nft,omitempty" jsonschema:"NFT as <collection>#<id> or an nft alias; omit for ETH"`
 	// Confirmations overrides the per-network confirmation target (§5.2). nil ⇒ the
 	// per-network default.
-	Confirmations *uint64 `json:"confirmations,omitempty" jsonschema:"type=integer,minimum=0"`
+	Confirmations *uint64 `json:"confirmations,omitempty" jsonschema:"override the per-network confirmation target; omit for the default"`
 	// Timeout bounds the wait. ZERO ⇒ UNBOUNDED invoice wait (NOT the tx 10m
 	// default) — the §5.8 default.
-	Timeout Duration `json:"timeout,omitempty" jsonschema:"type=string,format=duration"`
+	Timeout Duration `json:"timeout,omitempty" jsonschema:"Go duration, e.g. 5m; ZERO/omit = UNBOUNDED invoice wait (set one for agents)"`
 	// FromBlock is the resume baseline (= last_scanned+1 from a prior timeout line).
 	// nil ⇒ the head at listen start (minus receive.lookback-blocks).
-	FromBlock *uint64 `json:"from_block,omitempty" jsonschema:"type=integer,minimum=0"`
+	FromBlock *uint64 `json:"from_block,omitempty" jsonschema:"resume baseline block (last_scanned+1 from a prior timeout); omit for the head at listen start"`
 	// Network / RPC are the per-invocation endpoint selection (§2.8).
 	Network string `json:"network,omitempty"`
 	RPC     string `json:"rpc,omitempty"`

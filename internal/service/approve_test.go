@@ -104,10 +104,11 @@ func TestApprove_UnlimitedUnackedDenied(t *testing.T) {
 	})
 	allowSpender(t, svc, spender)
 
-	// --unlimited WITHOUT --yes (Confirm=false) ⇒ denied unlimited_unacked (exit 3).
+	// --unlimited WITHOUT the acknowledgement (AckUnlimited=false) ⇒ denied
+	// unlimited_unacked (exit 3). Yes (the TTY-skip) is irrelevant to the ack now (§6.3).
 	_, err := svc.TokenApprove(context.Background(), domain.LocalCLI(), domain.ApproveRequest{
 		Token: "tst", Spender: spender.Hex(), Unlimited: true, From: from.Hex(), Network: "mainnet",
-		Confirm: false, Yes: false,
+		AckUnlimited: false, Yes: false,
 	}, nil)
 	if err == nil {
 		t.Fatal("an unacked --unlimited approval must be denied")
@@ -182,11 +183,11 @@ func TestApprove_SentinelAmountUnackedDenied(t *testing.T) {
 	allowSpender(t, svc, spender)
 
 	sentinel := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)).String()
-	// A sentinel --amount WITHOUT --yes ⇒ denied unlimited_unacked, exactly like
-	// --unlimited without --yes. The --unlimited flag is false here.
+	// A sentinel --amount WITHOUT the acknowledgement ⇒ denied unlimited_unacked, exactly
+	// like --unlimited without the ack. The --unlimited flag is false here.
 	_, err := svc.TokenApprove(context.Background(), domain.LocalCLI(), domain.ApproveRequest{
 		Token: "tst", Spender: spender.Hex(), Amount: sentinel, From: from.Hex(), Network: "mainnet",
-		Confirm: false, Yes: false,
+		AckUnlimited: false, Yes: false,
 	}, nil)
 	if err == nil {
 		t.Fatal("an unacked sentinel --amount approval must be denied (unlimited bypass)")
@@ -214,7 +215,7 @@ func TestApprove_FailClosedNoAllowlistDenied(t *testing.T) {
 	})
 
 	_, err := svc.TokenApprove(context.Background(), domain.LocalCLI(), domain.ApproveRequest{
-		Token: "tst", Spender: spender.Hex(), Amount: "10", From: from.Hex(), Network: "mainnet", Yes: true, Confirm: true,
+		Token: "tst", Spender: spender.Hex(), Amount: "10", From: from.Hex(), Network: "mainnet", Yes: true,
 	}, nil)
 	if err == nil {
 		t.Fatal("a token approval with limits set but no allowlist must fail closed")

@@ -1,0 +1,4055 @@
+[
+  {
+    "name": "account_show",
+    "description": "Show one account by ref: its address, kind, wallet/index, alias, and full BIP-44 path for an HD account. NON-SECRET metadata only — never a private key. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "alias": {
+          "type": "string"
+        },
+        "default": {
+          "type": "boolean"
+        },
+        "index": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "wallet": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "address",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "accounts_list",
+    "description": "List signing accounts (HD and standalone) and the current default. Returns refs, addresses, kinds, wallet/index/alias — NON-SECRET metadata only, never a key. Filter with 'wallet'. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "wallet": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "accounts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "alias": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "default": {
+                "type": "boolean"
+              },
+              "index": {
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              },
+              "wallet": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "address",
+              "kind",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "default": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accounts"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "balance",
+    "description": "Read an account's balance on a network. Returns the native (ETH) balance by default; set 'token' (alias or 0x) for one ERC-20 balance, or 'all':true for every registry token the account holds. 'account' accepts an account ref, a raw 0x address, or an ENS name; omit to use the default account. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "eth": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "token": {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "base": {
+              "type": "string"
+            },
+            "bundled": {
+              "type": "boolean"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": "integer"
+            },
+            "formatted": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "contract",
+            "decimals",
+            "kind",
+            "base",
+            "formatted"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "tokens": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alias": {
+                "type": "string"
+              },
+              "base": {
+                "type": "string"
+              },
+              "bundled": {
+                "type": "boolean"
+              },
+              "contract": {
+                "type": "string"
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "formatted": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract",
+              "decimals",
+              "kind",
+              "base",
+              "formatted"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "wei": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "address",
+        "network"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "contract_call",
+    "description": "Call a read-only (view/pure) contract method via eth_call. NEVER signs, NEVER policy-checked. 'contract' is a registry alias, raw 0x, or ENS; 'method' is the function name (or carried by 'abi.sig'); 'args' are positional strings coerced by the ABI; provide the ABI by alias, inline 'abi' JSON, or 'abi.sig'. Returns the decoded, labeled outputs. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "abi": {
+          "additionalProperties": false,
+          "properties": {
+            "abi_json": {
+              "type": "string"
+            },
+            "alias": {
+              "type": "string"
+            },
+            "sig": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "args": {
+          "description": "positional args as strings, coerced by the ABI",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "block": {
+          "description": "block number or tag; empty = latest",
+          "type": "string"
+        },
+        "contract": {
+          "description": "alias, 0x address, or ENS of the contract",
+          "type": "string"
+        },
+        "from": {
+          "description": "optional msg.sender (address/ENS/account ref); NOT a signer",
+          "type": "string"
+        },
+        "method": {
+          "description": "function name; omit when --sig carries it",
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "contract": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        },
+        "method": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "returns": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "method",
+        "returns",
+        "network"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "contract_decode",
+    "description": "Decode 0x calldata into its method, 4-byte selector, and labeled arguments. Pure — never touches the chain or policy. Provide an ABI via alias, inline 'abi', or 'abi.sig' to label the args. Use this to inspect what a calldata blob does before sending it.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "abi": {
+          "additionalProperties": false,
+          "properties": {
+            "abi_json": {
+              "type": "string"
+            },
+            "alias": {
+              "type": "string"
+            },
+            "sig": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "calldata": {
+          "description": "0x… raw calldata",
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "calldata"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "selector",
+        "args"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "contract_encode",
+    "description": "Build raw calldata: selector || abi(args) -\u003e 0x bytes. Pure — for relayers, meta-transactions, and debugging; touches no chain, no keystore, no policy. Provide the function via 'method'+ABI or 'abi.sig', and 'args' as positional strings. Returns the 0x calldata.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "abi": {
+          "additionalProperties": false,
+          "properties": {
+            "abi_json": {
+              "type": "string"
+            },
+            "alias": {
+              "type": "string"
+            },
+            "sig": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "calldata": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "calldata"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "contract_logs",
+    "description": "Read decoded event logs for a contract via eth_getLogs. NEVER signs. 'contract' is an alias/0x/ENS; 'event' is the event name (or 'abi.sig'); 'args' filter on indexed args (name=value); 'fromBlock'/'toBlock' bound the range. Returns the decoded, labeled log args. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "abi": {
+          "additionalProperties": false,
+          "properties": {
+            "abi_json": {
+              "type": "string"
+            },
+            "alias": {
+              "type": "string"
+            },
+            "sig": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "args": {
+          "description": "indexed-arg filters (name=value)",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "contract": {
+          "description": "alias, 0x address, or ENS",
+          "type": "string"
+        },
+        "event": {
+          "description": "event name; omit when --sig carries it",
+          "type": "string"
+        },
+        "from_block": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "to_block": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        },
+        "event": {
+          "type": "string"
+        },
+        "logs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "block": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "block_hash": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string"
+              },
+              "log_index": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tx_hash": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tx_hash",
+              "log_index",
+              "block",
+              "block_hash",
+              "event",
+              "args"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract",
+        "event",
+        "logs",
+        "network"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "contract_send",
+    "description": "Sign and broadcast a state-changing call to ANY contract (the escape hatch for non-standard ABIs). Policy-checked before signing EXACTLY like 'send': the contract is the destination (allowlist), --value + gas count toward spend limits and the gas cap, and it FAILS CLOSED when limits are set but no allowlist is. CRITICAL: if the calldata encodes a known approve/transfer/permit, it is classified and routed through the SAME checks as token_approve — including the unlimited ceremony; raw calldata is NOT a policy bypass. Provide the ABI by registry alias, or pass abi/sig inline with a raw 0x address. Waits for confirmations by default over MCP.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "abi": {
+          "additionalProperties": false,
+          "properties": {
+            "abi_json": {
+              "type": "string"
+            },
+            "alias": {
+              "type": "string"
+            },
+            "sig": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "acknowledge_unlimited": {
+          "description": "Required when the calldata classifier detects an UNLIMITED approve/permit. Grants the spender an unbounded allowance. Omit unless that is the explicit intent.",
+          "type": "boolean"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "contract": {
+          "description": "alias, 0x address, or ENS — the tx DESTINATION",
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas_limit": {
+          "type": "string"
+        },
+        "gas_price": {
+          "type": "string"
+        },
+        "legacy": {
+          "type": "boolean"
+        },
+        "max_fee": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "description": "manual nonce (advanced); omit to auto-derive",
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "priority_fee": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "speed": {
+          "type": "string"
+        },
+        "value": {
+          "description": "msg.value, e.g. 0.5 (ETH); counts vs spend limits",
+          "type": "string"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmations": {
+              "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "description": "Go duration string, e.g. 5m; omit = default 10m",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "contract"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "convert",
+    "description": "Convert an amount between Ethereum units (wei, gwei, eth). Pure arithmetic — no network, no keystore. Pass 'amount' (with an optional unit suffix like '1.5eth', or set 'from') and the target 'to' unit. Use this whenever you need exact base-unit math instead of computing 10^18 yourself (which a float cannot represent).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "description": "value with optional unit suffix, e.g. \"1.5eth\" or \"100\"",
+          "type": "string"
+        },
+        "from": {
+          "description": "source unit when not suffixed: eth|gwei|wei",
+          "type": "string"
+        },
+        "to": {
+          "description": "target unit: eth|gwei|wei",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "to"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "wei": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "input",
+        "wei",
+        "from",
+        "to",
+        "value"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "ens_resolve",
+    "description": "Forward-resolve an ENS name to its address on a network. Resolution is per-network (the same name resolves independently on mainnet vs Sepolia). Returns the checksummed address; an unresolved name is a clean error, never an all-zero address. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "the ENS name to resolve, e.g. vitalik.eth",
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "address",
+        "network"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "ens_reverse",
+    "description": "Reverse-resolve an address to its primary ENS name on a network. The result is FORWARD-VERIFIED: a name is returned only when it forward-resolves back to the address (verified:true); otherwise name is empty and verified:false. Never trust an unverified reverse name. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "description": "the 0x address to reverse-resolve",
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "address",
+        "verified",
+        "network"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "gas",
+    "description": "Read current gas/fee quotes for a network at three speeds (slow/normal/fast) plus the next base fee. Use this to choose fee parameters before a send. Every fee is an exact wei decimal string. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "legacy": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "speed": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "base_fee": {
+          "type": "string"
+        },
+        "fast": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "legacy": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "string"
+        },
+        "normal": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "slow": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "network",
+        "legacy",
+        "slow",
+        "normal",
+        "fast"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "nft_list",
+    "description": "List the NFTs an account owns across the locally-registered collections on a network (v1 enumerates the registry, not arbitrary on-chain holdings). 'account' is an account ref, 0x, or ENS; omit for the default account. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "owned": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "type": "string"
+              },
+              "alias": {
+                "type": "string"
+              },
+              "balance": {
+                "type": "string"
+              },
+              "collection": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "network": {
+                "type": "string"
+              },
+              "nft_alias": {
+                "type": "string"
+              },
+              "owned_by_you": {
+                "type": "boolean"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "token_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "network",
+              "collection",
+              "kind",
+              "token_id"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "network",
+        "address",
+        "owned"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "policy_show",
+    "description": "Read the active signing policy: whether guardrails are on, the default and per-network spend limits, the destination/spender allowlist and denylist, and the self-address set. Use this to pre-flight whether a transfer is in-policy before you try it. READ-ONLY — there is no tool to change the policy (mutations are admin-passphrase-gated and operator-only). Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "allowlist": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "address"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "anchor_source": {
+          "type": "string"
+        },
+        "default": {
+          "additionalProperties": false,
+          "properties": {
+            "allowlist_enabled": {
+              "type": "string"
+            },
+            "include_self": {
+              "type": "string"
+            },
+            "max_day_wei": {
+              "type": "string"
+            },
+            "max_gas_price_wei": {
+              "type": "string"
+            },
+            "max_tx_wei": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "denylist": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "address"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "messages": {
+          "type": "string"
+        },
+        "networks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "allowlist_enabled": {
+                "type": "string"
+              },
+              "include_self": {
+                "type": "string"
+              },
+              "max_day_wei": {
+                "type": "string"
+              },
+              "max_gas_price_wei": {
+                "type": "string"
+              },
+              "max_tx_wei": {
+                "type": "string"
+              },
+              "network": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "network"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "present": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "self_addresses": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "watermark": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "written_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "active",
+        "present",
+        "verified",
+        "nonce",
+        "watermark",
+        "written_by",
+        "anchor_source",
+        "default"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "receive",
+    "description": "Watch a receiving address for an inbound transfer and block until it confirms, streaming progress. The receiving address is emitted as the FIRST progress notification (give it to the counterparty). Omit 'amount' to accept any inbound ETH; set 'amount' for a target, 'token'/'nft' for a non-ETH asset, 'exact':true to require one single matching transfer. 'new':true derives a FRESH invoice address (requires a writable keystore and 'wallet'). IMPORTANT: by default this blocks FOREVER — set 'timeout' (e.g. '30m') so the call is bounded; on timeout it returns a resumable result, not an error. Read-only (it derives/echoes an address but never signs).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "description": "account ref to listen on; defaults to the active account",
+          "type": "string"
+        },
+        "amount": {
+          "description": "target amount; e.g. 0.5 (ETH) or 100 (token base units); omit for any-inbound",
+          "type": "string"
+        },
+        "confirmations": {
+          "description": "override the per-network confirmation target; omit for the default",
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "exact": {
+          "description": "require one single attributable transfer equal to --amount",
+          "type": "boolean"
+        },
+        "from_block": {
+          "description": "resume baseline block (last_scanned+1 from a prior timeout); omit for the head at listen start",
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "name": {
+          "description": "optional alias for the fresh --new index",
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "new": {
+          "description": "derive a fresh invoice address (requires a writable keystore)",
+          "type": "boolean"
+        },
+        "nft": {
+          "description": "NFT as \u003ccollection\u003e#\u003cid\u003e or an nft alias; omit for ETH",
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Go duration, e.g. 5m; ZERO/omit = UNBOUNDED invoice wait (set one for agents)",
+          "type": "string"
+        },
+        "token": {
+          "description": "ERC-20 registry alias or contract; omit for ETH",
+          "type": "string"
+        },
+        "wallet": {
+          "description": "target wallet for --new",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "token_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "chain_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cumulative_confirmed": {
+          "type": "string"
+        },
+        "exit": {
+          "type": "integer"
+        },
+        "last_scanned": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "network": {
+          "type": "string"
+        },
+        "remaining": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "type": "string"
+            },
+            "confirmations": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "confirmations",
+            "timeout"
+          ],
+          "type": "object"
+        },
+        "transfers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "attribution": {
+                "type": "string"
+              },
+              "block": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "block_hash": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "log_index": {
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "token_id": {
+                "type": "string"
+              },
+              "tx_hash": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "value",
+              "block",
+              "attribution"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "address",
+        "network",
+        "chain_id",
+        "asset",
+        "target",
+        "status",
+        "cumulative_confirmed",
+        "remaining",
+        "transfers",
+        "last_scanned",
+        "exit"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "send",
+    "description": "Sign and broadcast a transfer. Policy-checked before signing (spend limits, destination allowlist, gas cap). Waits for confirmations by default over MCP.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "description": "e.g. 0.5 (ETH) or 100 (token base units)",
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "description": "account ref; defaults to the active account",
+          "type": "string"
+        },
+        "gas_limit": {
+          "type": "string"
+        },
+        "gas_price": {
+          "type": "string"
+        },
+        "legacy": {
+          "type": "boolean"
+        },
+        "max_fee": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "description": "manual nonce (advanced); omit to auto-derive",
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "priority_fee": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "speed": {
+          "type": "string"
+        },
+        "to": {
+          "description": "address, ENS name, or contact",
+          "type": "string"
+        },
+        "token": {
+          "description": "registry alias or contract; omit for ETH",
+          "type": "string"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmations": {
+              "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "description": "Go duration string, e.g. 5m; omit = default 10m",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "sign_message",
+    "description": "Sign an off-chain message with an account's key (EIP-191 personal_sign). The Ethereum Signed Message prefix is ALWAYS applied (raw eth_sign is never offered). 'message' is the raw bytes (base64 over MCP); set 'noHash':true when 'message' is a pre-hashed 32-byte digest. Returns the signature, signer, and digest. Signs with a key; not a fund-moving op.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "description": "signing account ref; omit to use the default account",
+          "type": "string"
+        },
+        "message": {
+          "description": "the message to sign; raw bytes (base64 over MCP), or the 32-byte digest when no_hash is true",
+          "type": "string"
+        },
+        "network": {
+          "description": "network override; empty = the configured default",
+          "type": "string"
+        },
+        "no_hash": {
+          "description": "true when 'message' is a pre-hashed 32-byte digest; the EIP-191 prefix is STILL applied (raw eth_sign is never offered)",
+          "type": "boolean"
+        },
+        "rpc": {
+          "description": "RPC endpoint override; empty = the configured default",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        },
+        "signer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "signature",
+        "signer",
+        "digest",
+        "scheme"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "sign_typed_data",
+    "description": "Sign an EIP-712 typed-data document with an account's key. A recognized permit (EIP-2612 / DAI-style / Permit2) is policy-checked at SIGNATURE time EXACTLY like an on-chain approval — including the unlimited ceremony; unrecognized typed data is deny-by-default once a policy is active. 'typed' is the raw EIP-712 JSON (base64 over MCP); set 'acknowledge_unlimited':true to acknowledge a recognized UNLIMITED permit (otherwise it is refused). Returns the signature, signer, and digest.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "description": "signing account ref; omit to use the default account",
+          "type": "string"
+        },
+        "acknowledge_unlimited": {
+          "description": "Required when the approval is UNLIMITED. Grants the spender an unbounded allowance. Omit unless that is the explicit intent.",
+          "type": "boolean"
+        },
+        "network": {
+          "description": "network override; empty = the configured default",
+          "type": "string"
+        },
+        "rpc": {
+          "description": "RPC endpoint override; empty = the configured default",
+          "type": "string"
+        },
+        "typed": {
+          "description": "the EIP-712 typed-data document as raw JSON (base64 over MCP)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "typed"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        },
+        "signer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "signature",
+        "signer",
+        "digest",
+        "scheme"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "token_allowance",
+    "description": "Read the current ERC-20 allowance a spender holds over an owner's balance. 'owner' defaults to the active account; 'spender' is required. Returns the exact base-unit allowance, a decimals-aware human form, and whether it is unlimited. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "spender": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "spender"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "allowance": {
+          "type": "string"
+        },
+        "allowance_formatted": {
+          "type": "string"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "decimals": {
+          "type": "integer"
+        },
+        "network": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "spender": {
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "unlimited": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "network",
+        "contract",
+        "decimals",
+        "owner",
+        "spender",
+        "allowance",
+        "allowance_formatted"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "token_approve",
+    "description": "Approve an ERC-20 spender. APPROVALS ARE SPEND-EQUIVALENTS: policy-checked like a transfer (spender must pass the allowlist), and an unlimited approval grants the spender an unbounded allowance over every unit the account ever holds.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledge_unlimited": {
+          "description": "Required when the approval is UNLIMITED. Grants the spender an unbounded allowance over the token. Omit unless that is the explicit intent.",
+          "type": "boolean"
+        },
+        "amount": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "spender": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "unlimited": {
+          "type": "boolean"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmations": {
+              "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "description": "Go duration string, e.g. 5m; omit = default 10m",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "token",
+        "spender"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "token_info",
+    "description": "Read on-chain ERC-20 metadata (symbol, decimals, kind) for a token by alias or 0x contract, without registering it. Reports whether the address is in the local registry. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "bundled": {
+          "type": "boolean"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "decimals": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "registered": {
+          "type": "boolean"
+        },
+        "symbol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "network",
+        "contract",
+        "kind",
+        "decimals",
+        "registered"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "token_list",
+    "description": "List the known ERC-20 tokens for a network — the bundled majors plus any locally-registered aliases. Use this to discover the alias/contract/decimals for a token before a balance, transfer, or approval. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "string"
+        },
+        "tokens": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alias": {
+                "type": "string"
+              },
+              "bundled": {
+                "type": "boolean"
+              },
+              "contract": {
+                "type": "string"
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "network": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "alias",
+              "contract",
+              "kind",
+              "decimals",
+              "network"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "network",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "token_revoke",
+    "description": "Revoke an ERC-20 spender by setting its allowance to 0 (an approve(spender, 0)). Policy-checked and broadcast through the same signing pipeline as an approval. Use 'token' and 'spender'; 'amount' and 'unlimited' are ignored on the revoke path. Waits for confirmations by default over MCP.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledge_unlimited": {
+          "description": "Required when the approval is UNLIMITED. Grants the spender an unbounded allowance over the token. Omit unless that is the explicit intent.",
+          "type": "boolean"
+        },
+        "amount": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "spender": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "unlimited": {
+          "type": "boolean"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmations": {
+              "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "description": "Go duration string, e.g. 5m; omit = default 10m",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "token",
+        "spender"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "tx_cancel",
+    "description": "Replace a pending, Daxie-originated transaction with a 0-value self-send at higher fees to cancel it (RBF). Identify it by 'hash'. Re-checked against the policy gas cap; an already-mined hash is an error. Waits for confirmations by default over MCP.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "gas_price": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "max_fee": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "priority_fee": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "speed": {
+          "type": "string"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmations": {
+              "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "description": "Go duration string, e.g. 5m; omit = default 10m",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "tx_list",
+    "description": "List this wallet's recent transactions from the local journal, newest first. Filter by 'account' and cap with 'limit'. The journal is the history (terminal rows are kept). Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "txs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "hash": {
+                "type": "string"
+              },
+              "journal_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "network": {
+                "type": "string"
+              },
+              "nonce": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "replaced_by": {
+                "type": "string"
+              },
+              "replaces": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "value_wei": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "journal_id",
+              "kind",
+              "status",
+              "from",
+              "to",
+              "nonce",
+              "value_wei",
+              "ts",
+              "network"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "txs"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "tx_speedup",
+    "description": "Replace a pending, Daxie-originated transaction with a higher-fee copy (RBF) to get it mined faster. Identify it by 'hash'. The bumped fees are re-checked against the policy gas cap. A foreign or already-mined hash is an error. Waits for confirmations by default over MCP.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "gas_price": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "max_fee": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "priority_fee": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "speed": {
+          "type": "string"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmations": {
+              "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+              "minimum": 0,
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "description": "Go duration string, e.g. 5m; omit = default 10m",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "tx_status",
+    "description": "Look up the current status of a transaction by hash: pending, confirmed, reverted, or replaced. Folds the local journal record with a single live receipt check; never broadcasts. A mined-but-reverted tx is reported as a tool error (code tx.reverted) AND the structured result, so you can read both. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hash"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "tx_wait",
+    "description": "Block until a transaction reaches its confirmation target, streaming progress. 'confirmations' overrides the per-network default depth; 'timeout' (Go duration, e.g. '5m', default 10m) bounds the wait. At the deadline it returns status:'pending' as a tool error (code tx.wait_timeout) plus the structured result — re-call to resume. Use this to resume after a send timed out. Read-only (it waits on an existing tx; it never signs).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmations": {
+          "description": "target confirmation depth; 0/omit = per-network default (mainnet 2, Sepolia 1)",
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "hash": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "rpc": {
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Go duration string, e.g. 5m; omit = default 10m",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hash"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_wei": {
+          "type": "string"
+        },
+        "asset": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "type": "string"
+            },
+            "decimals": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "block_number": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "classification": {
+          "additionalProperties": false,
+          "properties": {
+            "classified_as": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "spender": {
+              "type": "string"
+            },
+            "unlimited": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "classified_as"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "confirmations": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "gas": {
+          "additionalProperties": false,
+          "properties": {
+            "base_fee": {
+              "type": "string"
+            },
+            "gas_limit": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gas_price": {
+              "type": "string"
+            },
+            "legacy": {
+              "type": "boolean"
+            },
+            "max_fee_per_gas": {
+              "type": "string"
+            },
+            "priority_fee": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "string"
+            },
+            "worst_case_gas_wei": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "legacy",
+            "gas_limit"
+          ],
+          "type": "object"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "journal_id": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "nonce": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replaced": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "ens_name": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "via": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "hash",
+        "network",
+        "from",
+        "to",
+        "asset",
+        "amount_wei",
+        "nonce",
+        "gas",
+        "status",
+        "confirmations",
+        "journal_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "verify",
+    "description": "Verify a signature: recover the signer via ecrecover and check it equals the claimed 'address' (which may be a 0x literal or an ENS name). Provide exactly one of 'message' (EIP-191) or 'typed' (EIP-712), plus the 0x 65-byte 'signature'. A mismatch returns valid:false with the recovered address (a validation outcome, not an auth failure). Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "description": "the claimed signer: a 0x address or an ENS name (resolved, then compared)",
+          "type": "string"
+        },
+        "message": {
+          "description": "EIP-191 path: the message bytes that were signed (base64 over MCP), or the 32-byte digest when no_hash is true",
+          "type": "string"
+        },
+        "network": {
+          "description": "network override; empty = the configured default",
+          "type": "string"
+        },
+        "no_hash": {
+          "description": "true when 'message' is a pre-hashed 32-byte digest; the EIP-191 prefix is STILL applied",
+          "type": "boolean"
+        },
+        "rpc": {
+          "description": "RPC endpoint override; empty = the configured default",
+          "type": "string"
+        },
+        "signature": {
+          "description": "the 0x-hex 65-byte [R||S||V] signature to verify",
+          "type": "string"
+        },
+        "typed": {
+          "description": "EIP-712 path: the typed-data document as raw JSON (base64 over MCP)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signature",
+        "address"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "recovered": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "signer": {
+          "type": "string"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "valid",
+        "signer",
+        "recovered",
+        "digest",
+        "scheme"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "wallet_list",
+    "description": "List the HD wallets in the keystore: names, ids, account counts, creation dates. Returns NON-SECRET grouping metadata only — never a mnemonic, key, or seed. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "wallets": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "accounts": {
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "wallet_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "wallet_id",
+              "accounts",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "wallets"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "wallet_show",
+    "description": "Show one HD wallet by name: its id, BIP-44 derivation path prefix, next index, and the derived accounts (refs, addresses, aliases). NON-SECRET metadata only — never a mnemonic or seed. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "accounts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "alias": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "default": {
+                "type": "boolean"
+              },
+              "index": {
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              },
+              "wallet": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "address",
+              "kind",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "next_index": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path_prefix": {
+          "type": "string"
+        },
+        "wallet_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "wallet_id",
+        "path_prefix",
+        "next_index",
+        "created_at",
+        "accounts"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  }
+]

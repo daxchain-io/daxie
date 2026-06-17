@@ -75,7 +75,7 @@ func TestContractSend_IntentMapsCalldataAndValue(t *testing.T) {
 // TestContractSend_IntentAckedFromUnlimitedNotConfirm pins the §4.2/§11-D12 fix: the
 // Intent's acked bit (→ Check.Acked → the stage-6 unlimited gate) is sourced from the
 // DELIBERATE --unlimited acknowledgement (req.AckUnlimited), NEVER from the bare --yes
-// (req.Confirm). A `contract send --yes` (Confirm=true) carrying an unlimited approve must
+// (req.Yes). A `contract send --yes` (Yes=true) carrying an unlimited approve must
 // NOT be acked — only AckUnlimited=true acks it — so the generic path cannot silently
 // defeat the typed `token approve --unlimited --yes` ceremony.
 func TestContractSend_IntentAckedFromUnlimitedNotConfirm(t *testing.T) {
@@ -89,10 +89,10 @@ func TestContractSend_IntentAckedFromUnlimitedNotConfirm(t *testing.T) {
 		From: from.Hex(), Network: "mainnet",
 	}
 
-	// --yes alone (Confirm=true, AckUnlimited=false) must NOT set acked: --yes only skips
+	// --yes alone (Yes=true, AckUnlimited=false) must NOT set acked: --yes only skips
 	// the TTY confirmation, it is not the unlimited acknowledgement.
 	yesOnly := base
-	yesOnly.Confirm, yesOnly.Yes = true, true
+	yesOnly.Yes = true
 	in, err := svc.resolveContractSendIntent(context.Background(), domain.LocalCLI(), yesOnly, nil)
 	if err != nil {
 		t.Fatalf("resolveContractSendIntent (--yes only): %v", err)
@@ -104,7 +104,7 @@ func TestContractSend_IntentAckedFromUnlimitedNotConfirm(t *testing.T) {
 
 	// --unlimited (AckUnlimited=true) sets acked — the deliberate acknowledgement.
 	withAck := base
-	withAck.Confirm, withAck.Yes, withAck.AckUnlimited = true, true, true
+	withAck.Yes, withAck.AckUnlimited = true, true
 	in2, err := svc.resolveContractSendIntent(context.Background(), domain.LocalCLI(), withAck, nil)
 	if err != nil {
 		t.Fatalf("resolveContractSendIntent (--unlimited --yes): %v", err)

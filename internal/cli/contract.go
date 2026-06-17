@@ -453,9 +453,8 @@ func newContractSendCmd(ctx context.Context, rs *rootState) *cobra.Command {
 				Network:      rs.flags.Network,
 				RPC:          rs.flags.RPC,
 				DryRun:       dryRun,
-				Confirm:      rs.flags.Yes,
-				Yes:          rs.flags.Yes,
-				AckUnlimited: unlimited,
+				Yes:          rs.flags.Yes, // TTY-skip only (json:"-")
+				AckUnlimited: unlimited,    // the DELIBERATE unlimited acknowledgement (--unlimited, gated on --yes above)
 				Wait:         w,
 			}
 			applyGasToContractSend(cmd, &gf, &req)

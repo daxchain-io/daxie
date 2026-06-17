@@ -451,3 +451,63 @@ func TestEvaluateDenylistNameBroadening(t *testing.T) {
 		t.Fatalf("the pinned denied address must match directly; got %+v", dec)
 	}
 }
+
+// 12. Stage-3b ⟷ stage-5b interaction for an UNKNOWN-calldata contract send with the
+// allowlist ON. The service marks such a send UnknownCalldata=true and sets
+// Dest=ContractAddr=the contract, so stage-3b (rank 1, codeAllowlist) would refuse the
+// contract as a non-allowlisted destination and MASK stage-5b's per-triple opt-in (rank 3,
+// codeContractCall) — making `contracts_allowed[]` dead whenever the allowlist is enabled
+// (every sealed policy's default). stageAllowlist therefore EXEMPTS the unknown-calldata
+// path: that destination is governed SOLELY by stage-5b (contract-address allowlist OR the
+// (network, contract, selector) triple). This pins both halves: the triple opens the send
+// under an enabled allowlist, and absent it the denial is contract_call — NOT allowlist;
+// codeAllowlist must not even appear in the accumulated violations.
+func TestEvaluateUnknownCalldataExemptFromAllowlist(t *testing.T) {
+	contract := other // NOT on the (empty) allowlist; the allowlist is ON below.
+	sel := "0xa694fc3a"
+
+	// A zero-value unknown-calldata send, exactly as service.classifyContractSend builds it:
+	// Dest=ContractAddr=contract, Kind "contract" ⇒ effectiveKind KindTransfer.
+	mkReq := func() Check {
+		return Check{
+			Account:         selfAcc,
+			Dest:            contract,
+			Network:         "mainnet",
+			Kind:            "contract",
+			UnknownCalldata: true,
+			ContractAddr:    contract,
+			Selector:        sel,
+		}
+	}
+
+	// Allowlist ON (the sealed-policy default); 1 ETH per-tx so the value/gas gates pass a
+	// fortiori on a zero-value send.
+	p := policyWithLimits("1000000000000000000", "0", "0", true)
+	p.Rules.Default.MaxDayWei = nil
+	p.Rules.Default.MaxGasPriceWei = nil
+
+	// (b) the exact (network, contract, selector) triple opted in ⇒ ALLOWED even though the
+	// contract is not on the address allowlist (design §4.3 stage 5b option b).
+	allowed := p
+	allowed.ContractsAllowed = []ContractAllow{{Network: "mainnet", Contract: lowerHex(contract), Selector: sel}}
+	if dec := Evaluate(allowed, mkReq(), big.NewInt(0), now0()); !dec.Allowed {
+		t.Fatalf("an allowlist-ON unknown send whose triple is opted in must pass (stage-5b governs the dest); got %+v", dec)
+	}
+
+	// Without the triple: deny by default — code contract_call (stage-5b), NOT allowlist
+	// (stage-3b is exempt for the unknown-calldata destination).
+	dec := Evaluate(p, mkReq(), big.NewInt(0), now0())
+	if dec.Allowed || dec.Code != codeContractCall {
+		t.Fatalf("a non-opted-in unknown send must be denied contract_call; got %+v", dec)
+	}
+	if dec.Data["reason"] != "not_allowed" {
+		t.Fatalf("stage-5b reason = %v, want not_allowed", dec.Data["reason"])
+	}
+	// The crux: stage-3b must NOT have fired on the contract-as-destination, or it would win
+	// at rank 1 and mask the contract_call verdict — codeAllowlist must be absent entirely.
+	for _, v := range dec.Violations {
+		if v.Code == codeAllowlist {
+			t.Fatalf("stage-3b must be exempt for unknown calldata, but allowlist fired: %+v", dec.Violations)
+		}
+	}
+}

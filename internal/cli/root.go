@@ -79,6 +79,7 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newSignCmd(ctx, rs),     // M9
 		newVerifyCmd(ctx, rs),   // M9
 		newContractCmd(ctx, rs), // M10
+		newMcpCmd(ctx, rs),      // M11
 	)
 
 	return root

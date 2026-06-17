@@ -144,11 +144,11 @@ func newSignTypedCmd(ctx context.Context, rs *rootState) *cobra.Command {
 			defer closeFn()
 
 			res, err := svc.SignTyped(cmd.Context(), domain.LocalCLI(), domain.SignTypedRequest{
-				Account: resolveFrom(rs, account),
-				Typed:   typed,
-				Network: rs.flags.Network,
-				RPC:     rs.flags.RPC,
-				Acked:   unlimited && rs.flags.Yes,
+				Account:      resolveFrom(rs, account),
+				Typed:        typed,
+				Network:      rs.flags.Network,
+				RPC:          rs.flags.RPC,
+				AckUnlimited: unlimited && rs.flags.Yes,
 			})
 			if err != nil {
 				return err

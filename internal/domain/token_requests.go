@@ -140,12 +140,20 @@ type ApproveRequest struct {
 	RPC     string `json:"rpc,omitempty"`
 
 	DryRun bool `json:"dry_run,omitempty"`
-	// Confirm is the agent-facing acknowledgement: for an UNLIMITED approval it is
-	// the --unlimited --yes ceremony bit the policy unlimited gate requires (§4.2);
-	// for a bounded approval it is the ordinary TTY-confirmation skip (like tx send).
-	Confirm bool `json:"confirm" jsonschema:"default=false"`
-	// Yes is the CLI-only TTY-skip mirror, excluded from the MCP schema (json:"-").
+	// Yes is the interactive-confirmation-skip flag (CLI --yes; MCP-ceremony
+	// constant-true for a BOUNDED approval). It carries json:"-" so the SDK never
+	// infers it into the MCP schema (§6.2) — it is a CLI-interaction concern, NOT the
+	// unlimited acknowledgement. The unlimited grant is acknowledged via AckUnlimited.
 	Yes bool `json:"-"`
+	// AckUnlimited is the explicit unlimited-approval acknowledgement (§4.2, §6.3): the
+	// CLI --unlimited --yes ceremony, the MCP acknowledge_unlimited schema field, mapped
+	// straight to Check.Acked. It is DISTINCT from Yes (which only skips the TTY
+	// confirmation): an UNLIMITED approve(spender, MAX) without AckUnlimited is denied
+	// policy.denied.unlimited_unacked (exit 3). The agent must "say the dangerous thing
+	// out loud" in the audited tool call — never frontend-set (§6.4). It mirrors
+	// ContractSendRequest.AckUnlimited / SignTypedRequest.AckUnlimited (one named field
+	// across all three signing surfaces that can grant an unbounded allowance).
+	AckUnlimited bool `json:"acknowledge_unlimited,omitempty" jsonschema:"Required when the approval is UNLIMITED. Grants the spender an unbounded allowance over the token. Omit unless that is the explicit intent."`
 
 	Wait WaitOpts `json:"wait,omitempty"`
 }

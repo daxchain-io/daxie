@@ -293,7 +293,7 @@ func TestSignTypedPermitUnlimitedUnackedDenied(t *testing.T) {
 
 	// With Acked ⇒ signs.
 	if _, err := svc.SignTyped(context.Background(), domain.LocalCLI(), domain.SignTypedRequest{
-		Account: rs.addr.Hex(), Typed: doc, Network: "mainnet", Acked: true,
+		Account: rs.addr.Hex(), Typed: doc, Network: "mainnet", AckUnlimited: true,
 	}); err != nil {
 		t.Fatalf("an acknowledged unlimited permit must sign: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestSignTypedPermit2HardDenyOnUnderlyingToken(t *testing.T) {
 
 	// Even WITH the ack, the per-token hard-deny refuses.
 	_, err := svc.SignTyped(context.Background(), domain.LocalCLI(), domain.SignTypedRequest{
-		Account: rs.addr.Hex(), Typed: doc, Network: "mainnet", Acked: true,
+		Account: rs.addr.Hex(), Typed: doc, Network: "mainnet", AckUnlimited: true,
 	})
 	if err == nil {
 		t.Fatal("an unlimited Permit2 approval of an allow_unlimited:false token must be hard-denied (even acked)")
@@ -501,7 +501,7 @@ func TestSignTypedPermit2TransferFromGated(t *testing.T) {
 
 	// With the ack ⇒ signs (the spend-equivalent gate passed; it was never the unknown gate).
 	if _, err := svc.SignTyped(context.Background(), domain.LocalCLI(), domain.SignTypedRequest{
-		Account: rs.addr.Hex(), Typed: doc, Network: "mainnet", Acked: true,
+		Account: rs.addr.Hex(), Typed: doc, Network: "mainnet", AckUnlimited: true,
 	}); err != nil {
 		t.Fatalf("an acknowledged PermitTransferFrom must sign: %v", err)
 	}
