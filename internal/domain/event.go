@@ -20,9 +20,32 @@ const (
 	EvDetected     EventKind = "detected"     // receive — inbound transfer seen
 	EvConfirming   EventKind = "confirming"   // receive — awaiting confirmations
 	EvConfirmed    EventKind = "confirmed"    // receive — one per confirmed inbound (NOT terminal)
+	EvReorged      EventKind = "reorged"      // receive — a confirmed detection reorged out (subtract)
+	EvHeartbeat    EventKind = "heartbeat"    // receive — quiet-period keepalive
 	EvComplete     EventKind = "complete"     // receive — the single terminal success line (carries Exit)
 	EvTimeout      EventKind = "timeout"      // receive — terminal line on timeout (carries Exit)
 )
+
+// EventAsset is the resolved asset echoed on the receive `listening` line (§5.8).
+// It mirrors ReceiveAsset's wire shape but lives on Event so the service emit and
+// the renderer share one type without the renderer importing the request structs.
+type EventAsset struct {
+	Kind     string `json:"kind"`               // "eth" | "erc20" | "erc721" | "erc1155"
+	Contract string `json:"contract,omitempty"` // EIP-55 hex (token/NFT)
+	Alias    string `json:"alias,omitempty"`
+	Decimals int    `json:"decimals,omitempty"` // erc20 only (display)
+	TokenID  string `json:"token_id,omitempty"` // nft only (decimal string)
+}
+
+// EventTarget is the resolved completion target echoed on the receive `listening`
+// line (§5.8). Timeout is *string so an unbounded wait emits "timeout":null
+// verbatim.
+type EventTarget struct {
+	Mode          string  `json:"mode"`
+	Amount        string  `json:"amount,omitempty"`
+	Confirmations uint64  `json:"confirmations"`
+	Timeout       *string `json:"timeout"`
+}
 
 // Event is the single progress record streamed through EventSink (§5.9). One sink
 // type does not mean one destination: the FRONTEND routes per use case via the
@@ -41,6 +64,40 @@ type Event struct {
 	Detail  string         `json:"detail,omitempty"`
 	Exit    *int           `json:"exit,omitempty"` // carried by terminal receive lines
 	Stream  string         `json:"-"`              // "stdout" (receive) | "stderr" (send/wait)
+
+	// ── M8 receive payload (§5.8/§5.9) ──
+	//
+	// The receive NDJSON wire shape is produced by cli/render/receive.go, which
+	// constructs a purpose-built struct PER kind so the §5.8 key set is byte-exact
+	// (no stray send/wait keys, no key collisions on "confirmations"/"target").
+	// These fields are therefore the data carrier the renderer maps from; their
+	// json:"-" tags keep them OFF a whole-Event marshal so a future generic
+	// json.Marshal(Event) cannot leak a half-formed receive line or collide with
+	// the send/wait keys above. No float anywhere (§2.5): amounts are base-unit
+	// decimal strings.
+	V                   int          `json:"-"` // always 1 on receive lines (renderer stamps it)
+	Network             string       `json:"-"`
+	ChainID             uint64       `json:"-"`
+	Asset               *EventAsset  `json:"-"` // listening
+	TargetSpec          *EventTarget `json:"-"` // listening
+	TxHash              string       `json:"-"` // detected/confirming/confirmed/reorged
+	LogIndex            *int         `json:"-"` // detected
+	From                string       `json:"-"` // detected
+	Value               string       `json:"-"` // detected/confirmed/reorged (base-unit decimal)
+	TokenID             *string      `json:"-"` // detected (nft); nil ⇒ null in eth/erc20 examples
+	Block               uint64       `json:"-"` // detected
+	BlockHash           string       `json:"-"` // detected
+	Attribution         string       `json:"-"` // detected (tx|log|balance-delta)
+	Match               *bool        `json:"-"` // detected
+	CumulativeDetected  string       `json:"-"`
+	CumulativeConfirmed string       `json:"-"`
+	Remaining           string       `json:"-"`
+	LastScanned         uint64       `json:"-"`
+	FromBlock           uint64       `json:"-"` // listening
+	TxHashes            []string     `json:"-"` // complete
+	Resume              string       `json:"-"` // timeout
+	Note                string       `json:"-"` // ETH-listen "verify balance before resuming"
+	TS                  string       `json:"-"` // RFC3339 timestamp (service clock)
 }
 
 // EventSink is the one streaming callback the core emits to (§5.9). A nil sink

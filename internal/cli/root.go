@@ -75,6 +75,7 @@ func newRootCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newTokenCmd(ctx, rs),    // M5
 		newNFTCmd(ctx, rs),      // M6
 		newEnsCmd(ctx, rs),      // M7
+		newReceiveCmd(ctx, rs),  // M8
 	)
 
 	return root

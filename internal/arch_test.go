@@ -383,6 +383,74 @@ func namedTypeKind(t *testing.T, dir, name string) (namedTypeKindEnum, bool) {
 	return typeKindOther, false
 }
 
+// TestM8ReceiveFilesOnCorrectSide pins the M8 `daxie receive` files explicitly onto
+// the right side of the import matrix (design §2.2/§2.3c), per-FILE rather than
+// per-package, so a future edit that, say, makes the cli receive command reach a
+// provider (the chain client, keys, erc) to "just fetch one log" goes red here even
+// if the package as a whole still has a legitimate provider import via another file.
+//
+//   - cli/receive.go + cli/render/receive.go are FRONTEND files: they may import
+//     service + domain + render + cobra (+ ethunit for output) — never a provider.
+//   - service/receive.go + service/receive_eth.go are CORE files: they may import
+//     domain + providers (chain/erc/ens/registry/keys/ethunit/…) — never a frontend.
+//
+// The package-level TestImportMatrix already enforces the same law; this adds a
+// load-bearing file-scoped regression guard for the engine/frontend split that M8
+// introduces (the engine must stay in the core, the command a thin host).
+func TestM8ReceiveFilesOnCorrectSide(t *testing.T) {
+	root := moduleRoot(t)
+	cases := []struct {
+		file       string // module-relative path
+		wantLayer  layer
+		bannedDesc string
+	}{
+		{"internal/cli/receive.go", layerFrontend, "a provider (the receive command is a thin host; the engine lives in the core)"},
+		{"internal/cli/render/receive.go", layerFrontend, "a provider (the NDJSON renderer formats only; it imports domain, never a provider)"},
+		{"internal/service/receive.go", layerCore, "a frontend (the detection engine is core; it never imports cli/render)"},
+		{"internal/service/receive_eth.go", layerCore, "a frontend (the balance-delta math is core; it never imports cli/render)"},
+	}
+	for _, c := range cases {
+		path := filepath.Join(root, c.file)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("M8 file %s is missing: %v", c.file, err)
+			continue
+		}
+		for _, imp := range fileImports(t, path) {
+			to := classify(imp)
+			switch c.wantLayer {
+			case layerFrontend:
+				// A frontend file may not import a provider (ethunit excepted for output).
+				if to == layerProvider && providerOf(imp) != "ethunit" {
+					t.Errorf("M8 FRONTEND VIOLATION: %s imports provider %s; it must reach %s", c.file, imp, c.bannedDesc)
+				}
+				if to == layerHost {
+					t.Errorf("M8 FRONTEND VIOLATION: %s imports the host %s", c.file, imp)
+				}
+			case layerCore:
+				// A core file may not import a frontend.
+				if to == layerFrontend {
+					t.Errorf("M8 CORE VIOLATION: %s imports frontend %s; it must not reach %s", c.file, imp, c.bannedDesc)
+				}
+			}
+		}
+	}
+}
+
+// fileImports parses one Go file and returns its direct import paths (unquoted).
+func fileImports(t *testing.T, path string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+	out := make([]string, 0, len(f.Imports))
+	for _, spec := range f.Imports {
+		out = append(out, strings.Trim(spec.Path.Value, `"`))
+	}
+	return out
+}
+
 // TestNoViperOutsideConfigInTests guards the test code too: a _test.go file anywhere
 // but config that pulls viper would still constitute a leak in the built test binary.
 func TestNoViperOutsideConfigInTests(t *testing.T) {

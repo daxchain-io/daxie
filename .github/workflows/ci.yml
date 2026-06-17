@@ -221,11 +221,20 @@ jobs:
         # name+resolved-addr+resolved-at, a matching-pin send confirms, then RE-POINTING
         # the resolver makes the next send DENY policy.denied.pin_drift (reason ens_drift,
         # exit 3, nothing signed — the §4.3 stage-4 gate M7 activates) → reverse is
-        # forward-verified (a broken forward record yields an unverified empty name). The
+        # forward-verified (a broken forward record yields an unverified empty name), and
+        # M8's `daxie receive` inbound-detection engine against anvil with a CONCURRENT
+        # sender (internal/cli/receive_integration_test.go: a streaming-pipe harness runs
+        # `receive --json` in a goroutine, waits for the up-front `listening` line — the
+        # address-up-front + ETH-baseline-captured signal — then concurrently pays, and
+        # asserts the stream reaches the terminal `complete` exit 0 with the right
+        # cumulative + attribution; covers ETH cumulative (single + multi-payment), an
+        # ERC-20 log-detection receive, a --new fresh-address invoice receive, and the
+        # no-payment → terminal `timeout` exit 8 with an executable, statelessly-resumable
+        # resume string). The
         # `./...` +
         # `-tags integration` already compiles and runs every //go:build integration
-        # file, so the M3+M5+M6+M7 tests are covered without a new job; CGO=1 so -race is
-        # available on the one job that talks to a real EVM (shipped binaries stay
+        # file, so the M3+M5+M6+M7+M8 tests are covered without a new job; CGO=1 so -race
+        # is available on the one job that talks to a real EVM (shipped binaries stay
         # CGO_ENABLED=0).
         env:
           CGO_ENABLED: "1"
@@ -383,3 +392,35 @@ jobs:
         run: |
           chmod +x docs/demos/m07.sh
           DAXIE="$PWD/daxie" docs/demos/m07.sh
+
+  demo-m08:
+    name: m08 demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - uses: foundry-rs/foundry-toolchain@de808b1eea699e761c404bda44ba8f21aba30b2c # v1.3.1
+      - name: build daxie
+        run: go build -o daxie ./cmd/daxie
+      - name: run docs/demos/m08.sh unmodified
+        # The M8 receive acceptance demo (§10.1 gate, v0.8.0): the `daxie receive`
+        # inbound-detection engine + the NDJSON event stream. DRY: the command + the
+        # full flag set exist; --token+--nft together and --exact without --amount ⇒
+        # exit 2; --new without --wallet ⇒ exit 2. LIVE (anvil + curl on PATH via
+        # foundry-toolchain): start a throwaway anvil (chain-id 31337, confirmations 1),
+        # import the funded dev key, an unknown account ref ⇒ exit 10 ref.not_found, then
+        # the CONCURRENT-payment path — run `receive --json` in the background, wait for
+        # its up-front {"event":"listening","address":…,"v":1} line (the address-up-front
+        # guarantee + the ETH-baseline-captured signal), pay 0.5 ETH from `funded`, and
+        # assert the stream reaches the terminal {"event":"complete","exit":0} with
+        # cumulative_confirmed == 500000000000000000 and an attribution:"tx" detection.
+        # Finally a bounded receive with NO payment ⇒ the terminal
+        # {"event":"timeout","exit":8} carrying remaining at full precision +
+        # an executable `daxie receive … --from-block … --amount …` resume string.
+        # Asserts §5.7 codes 0/2/8/10.
+        run: |
+          chmod +x docs/demos/m08.sh
+          DAXIE="$PWD/daxie" docs/demos/m08.sh

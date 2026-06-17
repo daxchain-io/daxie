@@ -23,8 +23,24 @@ import (
 // is built here from os + golang.org/x/term (external, permitted) directly, so no
 // frontend→provider edge is created.
 func openService(ctx context.Context, rs *rootState) (*service.Service, func(), error) {
+	opts := buildServiceOptions(rs)
+	svc, err := service.Open(ctx, opts)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return svc, func() { _ = svc.Close() }, nil
+}
+
+// buildServiceOptions assembles the service.Options the frontend hands the core: the
+// real wall clock, the real ctx-aware scheduling sleeper (so the §5.8 receive poll
+// loop honors receive.poll-interval instead of busy-spinning — issue #3), the
+// flag>env resolution of the §7 default-account/network/rpc overrides, and the §3.6
+// host secret primitives. Kept separate from openService so the injection contract
+// (Clock + Sleep both non-nil) is directly assertable in a unit test without dialing.
+func buildServiceOptions(rs *rootState) service.Options {
 	opts := rs.flags.ServiceOptions()
-	opts.Clock = time.Now // the ONE real clock injection; the core reads it via s.Now()
+	opts.Clock = time.Now    // the ONE real clock injection; the core reads it via s.Now()
+	opts.Sleep = realSleeper // the ONE real scheduling injection (poll/backoff cadence)
 
 	// §7.7 default-account precedence is flag>env (the meta.json layer is keys').
 	// The frontend resolves the flag>env part here so the core never reads os.
@@ -69,12 +85,38 @@ func openService(ctx context.Context, rs *rootState) (*service.Service, func(), 
 		// stderr so stdout stays clean for piping.
 		Prompt: ttyPrompt,
 	}
+	return opts
+}
 
-	svc, err := service.Open(ctx, opts)
-	if err != nil {
-		return nil, func() {}, err
+// realSleeper is the production scheduling seam the core blocks through (§2.3): the
+// determinism guard bans the time.After/Sleep/NewTimer family inside
+// internal/service, so wall-clock-driven cadences — the §5.8 receive poll interval
+// (receive.poll-interval, default 4s) and the M3 tx-wait/broadcast backoff — flow
+// through THIS injected function instead, exactly as wall time flows through Clock.
+// Without it, service.Open falls back to noDelaySleep (returns immediately, discards
+// the duration), so a real `daxie receive` (an unbounded invoice wait by default)
+// would spin as fast as the RPC answers, pegging CPU and hammering the endpoint. It
+// is ctx-aware: a SIGTERM during a listen cancels the timer and surfaces as the
+// resumable timeout the core already handles. Lives in the frontend (cli may use the
+// time family) so the guard stays green by construction.
+func realSleeper(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		// A non-positive duration is an immediate yield; still honor cancellation.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
 	}
-	return svc, func() { _ = svc.Close() }, nil
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // ttyPrompt reads one secret from the terminal with echo disabled (the host TTY
