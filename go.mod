@@ -15,7 +15,7 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/tyler-smith/go-bip39 v1.1.0
-	golang.org/x/crypto v0.44.0
+	golang.org/x/crypto v0.45.0
 	golang.org/x/sys v0.41.0
 	golang.org/x/term v0.37.0
 	golang.org/x/text v0.31.0
