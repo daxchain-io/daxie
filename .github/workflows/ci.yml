@@ -2,6 +2,7 @@
 # bumps them). CGO is off everywhere (pure-Go deps, §9.4).
 #
 # Jobs:
+#   changes           - decide whether the expensive Go/anvil matrix is needed
 #   lint              - gofmt diff, go vet, golangci-lint (incl. depguard matrix; arch_test.go is authoritative)
 #   test              - go test -race ./... on ubuntu (incl. arch_test.go + determinism_test.go)
 #   test-cross-os     - go test ./... on macos + windows + windows-arm64 (the *_unix/_windows code)
@@ -30,8 +31,68 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_go_ci: ${{ steps.filter.outputs.run_go_ci }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: decide whether Go CI is required
+        id: filter
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+
+          zero=0000000000000000000000000000000000000000
+          base="${PUSH_BEFORE_SHA:-}"
+          if [ -n "${PR_BASE_SHA:-}" ]; then
+            base="$PR_BASE_SHA"
+          fi
+
+          if [ -z "$base" ] || [ "$base" = "$zero" ]; then
+            echo "run_go_ci=true" >> "$GITHUB_OUTPUT"
+            echo "No stable comparison base; running full Go CI."
+            exit 0
+          fi
+
+          if ! files="$(git diff --name-only "$base" "$GITHUB_SHA")"; then
+            echo "run_go_ci=true" >> "$GITHUB_OUTPUT"
+            echo "Could not diff against $base; running full Go CI."
+            exit 0
+          fi
+
+          if [ -z "$files" ]; then
+            echo "run_go_ci=false" >> "$GITHUB_OUTPUT"
+            echo "No changed files detected; skipping expensive Go CI jobs."
+            exit 0
+          fi
+
+          run_go_ci=false
+          while IFS= read -r file; do
+            case "$file" in
+              *.md|LICENSE|docs/deploy/*.yaml|docs/deploy/*.yml|.markdownlint-cli2.jsonc)
+                ;;
+              *)
+                run_go_ci=true
+                ;;
+            esac
+          done <<EOF
+          $files
+          EOF
+
+          echo "Changed files:"
+          printf '%s\n' "$files"
+          echo "run_go_ci=$run_go_ci" >> "$GITHUB_OUTPUT"
+
   lint:
     name: lint
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -61,6 +122,8 @@ jobs:
 
   test:
     name: test (race, ubuntu)
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -77,6 +140,8 @@ jobs:
 
   test-cross-os:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -95,6 +160,8 @@ jobs:
 
   cross-compile:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -115,6 +182,8 @@ jobs:
 
   govulncheck:
     name: govulncheck
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -129,6 +198,8 @@ jobs:
 
   goreleaser-snapshot:
     name: goreleaser build --snapshot
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -145,6 +216,8 @@ jobs:
 
   demo:
     name: m00 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -161,6 +234,8 @@ jobs:
 
   demo-m01:
     name: m01 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -182,6 +257,8 @@ jobs:
   # ── M2: anvil integration (//go:build integration; internal/testchain helper) ──
   integration:
     name: anvil integration
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     env:
       # CI MUST actually run anvil — a missing binary is a hard failure, never a
@@ -280,6 +357,8 @@ jobs:
 
   demo-m02:
     name: m02 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -302,6 +381,8 @@ jobs:
 
   demo-m03:
     name: m03 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -327,6 +408,8 @@ jobs:
 
   demo-m04:
     name: m04 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -354,6 +437,8 @@ jobs:
 
   demo-m05:
     name: m05 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -380,6 +465,8 @@ jobs:
 
   demo-m06:
     name: m06 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -406,6 +493,8 @@ jobs:
 
   demo-m07:
     name: m07 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -433,6 +522,8 @@ jobs:
 
   demo-m08:
     name: m08 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -465,6 +556,8 @@ jobs:
 
   demo-m09:
     name: m09 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -497,6 +590,8 @@ jobs:
 
   demo-m10:
     name: m10 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -530,6 +625,8 @@ jobs:
 
   demo-m11:
     name: m11 demo
+    needs: changes
+    if: needs.changes.outputs.run_go_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
