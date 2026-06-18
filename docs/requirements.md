@@ -355,7 +355,7 @@ Model the release pipeline on the **witwave `ww` client**
   the release archive, with scoop/winget manifests as a later addition.
   The keystore design must handle Windows paths/permissions.)
 - **[DECIDED]** **Homebrew** via `homebrew_casks:` (not the deprecated
-  `brews:` block) pushing to a tap repo (`daxchain-io/homebrew-daxie`),
+  `brews:` block) pushing to a tap repo (`daxchain-io/homebrew-tap`),
   using a fine-grained PAT (`HOMEBREW_TAP_GITHUB_TOKEN`) since the default
   `GITHUB_TOKEN` can't push across repos.
 - **[DECIDED]** **Universal curl installer**: an `install.sh` published as

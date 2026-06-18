@@ -4011,7 +4011,7 @@ list).
 | Version embedding | ldflags `-X` into `internal/version` (`Version`, `Commit`, `Date`=**commit** date for reproducibility); read by `daxie version` **and** the MCP server-info block (one core, two frontends) |
 | Signing | **cosign keyless (GitHub OIDC)** — no signing-key secret exists |
 | Provenance / SBOM | SLSA L3 via `slsa-github-generator`; syft SBOM per archive |
-| Homebrew | `homebrew_casks:` render-only (`skip_upload: true`); a separate `cask-publish` job (stable tags only) pushes to `daxchain-io/homebrew-daxie` with `HOMEBREW_TAP_GITHUB_TOKEN` — independently re-runnable, never triggers a rebuild |
+| Homebrew | `homebrew_casks:` render-only (`skip_upload: true`); a separate `cask-publish` job (stable tags only) pushes to `daxchain-io/homebrew-tap` with `HOMEBREW_TAP_GITHUB_TOKEN` — independently re-runnable, never triggers a rebuild |
 | OCI image | `ghcr.io/daxchain-io/images/daxie`, multi-arch via goreleaser **`dockers_v2:`** (the v3-default successor, not the deprecated `dockers:`/`docker_manifests:`), base `gcr.io/distroless/static-debian12:nonroot` (digest-pinned), cosign-signed manifest via the shared top-level `docker_signs:` |
 | Installer | `scripts/install.sh` published as a release asset; envs under **`DAXIE_INSTALL_*`** (a sub-namespace, never bare `DAXIE_*`, §9.4) |
 | Channels | `stable` = `vX.Y.Z`; `beta` = `vX.Y.Z-beta.N`/`-rc.N`. Brew, `:latest`, `:X.Y` track stable only |
@@ -4123,7 +4123,7 @@ release:
   mode: replace                                 # ONLY for a release whose core artifacts never finished publishing
   extra_files: [{ glob: scripts/install.sh }]
 homebrew_casks:
-  - { name: daxie, skip_upload: true, repository: { owner: daxchain-io, name: homebrew-daxie } }  # render-only; cask-publish pushes
+  - { name: daxie, skip_upload: true, repository: { owner: daxchain-io, name: homebrew-tap } }  # render-only; cask-publish pushes
 ```
 
 `Dockerfile.release` is COPY-only over `gcr.io/distroless/static-debian12:nonroot` (digest

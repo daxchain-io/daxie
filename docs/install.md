@@ -33,10 +33,10 @@ assets/install.sh/go install and `1.0.0-rc.N` for the GHCR image tag.
 ## Homebrew (cask)
 
 ```sh
-brew install --cask daxchain-io/daxie/daxie
+brew install --cask daxchain-io/tap/daxie
 ```
 
-The cask lives in the tap `daxchain-io/homebrew-daxie` (directory `Casks/`). It pins
+The cask lives in the tap `daxchain-io/homebrew-tap` (directory `Casks/`). It pins
 both the download URL **and** its SHA256, so a compromised tap is detectable by a
 checksum mismatch at install time. On macOS the cask's post-install hook clears the
 `com.apple.quarantine` attribute so the binary runs without a Gatekeeper prompt.
