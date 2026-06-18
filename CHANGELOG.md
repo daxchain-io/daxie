@@ -39,7 +39,7 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   verification by default, optional `--verify-signature` (cosign keyless), sudo-less
   `~/.local/bin` fallback, `DAXIE_INSTALL_*` env vars; `--uninstall` removes only the
   binary + marker, never key material or state.
-- **Homebrew cask** in `daxchain-io/homebrew-daxie` (stable channel only), pinning URL +
+- **Homebrew cask** in `daxchain-io/homebrew-tap` (stable channel only), pinning URL +
   SHA256.
 - **Docs:** v1.0 [README](README.md), [install](docs/install.md),
   [quickstart](docs/quickstart.md), [configuration](docs/configuration.md),
