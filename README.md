@@ -344,12 +344,33 @@ deployment. Pin exact versions or image digests in production.
 
 ## Contributing
 
-Every change must keep the gate green: unit tests on the 3-OS matrix, the anvil
-integration suite, `goreleaser build --snapshot` for all six targets, golangci-lint
-(incl. the depguard frontend/leaf matrix), the architecture guard in
-`internal/arch_test.go`, and the checked-in `docs/demos/mNN.sh` walkthroughs
-running unmodified. The design in
-[docs/design.md](docs/design.md) is the source of truth.
+Daxie is public source for transparency, and development is currently
+maintainer-led. See [CONTRIBUTING.md](CONTRIBUTING.md) for the current
+contribution policy.
+
+Every agreed change must keep the gate green: unit tests on the 3-OS matrix, the
+anvil integration suite, `goreleaser build --snapshot` for all six targets,
+golangci-lint (incl. the depguard frontend/leaf matrix), the architecture guard
+in `internal/arch_test.go`, and the checked-in `docs/demos/mNN.sh` walkthroughs
+running unmodified. The design in [docs/design.md](docs/design.md) is the source
+of truth.
+
+## Security
+
+Report suspected vulnerabilities through the process in
+[SECURITY.md](SECURITY.md). Do not publish exploit details, wallet material, or
+live-funds reproductions in public issues.
+
+## Risk Notice
+
+Daxie is provided under the Apache License 2.0 on an as-is basis, without
+warranties or liability except where required by law. Daxie signs and broadcasts
+blockchain transactions, which may be irreversible and may result in loss of
+funds.
+
+Users are responsible for reviewing configuration, policies, keys, RPC endpoints,
+transaction details, and applicable laws before using Daxie with real assets. Use
+testnets and small balances while evaluating.
 
 ## License
 
