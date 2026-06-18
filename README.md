@@ -281,7 +281,7 @@ each with the right durability and writability. This is the backbone of the
 | Class | Override var | Contents | K8s mount |
 |---|---|---|---|
 | **config** | `DAXIE_CONFIG` | `config.toml` (networks, RPC endpoints, gas/tx defaults) + `policy-anchor.json` (the seal verify key — read directly, never via Viper) | **read-only ConfigMap** |
-| **keystore** | `DAXIE_KEYSTORE` | encrypted keys, `meta.json` (aliases, default account) | Secret mount or PVC (read-only at runtime) |
+| **keystore** | `DAXIE_KEYSTORE` | `keystore.json`, `meta.json`, `wallets/<uuid>.json`, `accounts/UTC--...`, `index.lock` | Secret/external secret sync or PVC (read-only at runtime) |
 | **state** | `DAXIE_STATE_DIR` (+ `DAXIE_REGISTRY_DIR`) | tx journal + nonces, sealed `policy.json` + **durable spend counters**, token/NFT/contact registries | **PVC (must persist)** |
 | **cache** | `DAXIE_CACHE_DIR` | ENS / metadata / fee-history caches (reconstructible) | emptyDir / tmpfs |
 

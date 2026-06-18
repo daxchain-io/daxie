@@ -95,6 +95,21 @@ spec:
         - name: keystore
           secret:
             secretName: daxie-keystore
+            # Secret keys are flat; project them into the real keystore directory
+            # shape. Add one item for every wallets/<uuid>.json and
+            # accounts/UTC--... file in the keystore backup, or use an external
+            # secret sync / CSI store / restored PVC for a whole-directory mount.
+            items:
+              - key: keystore.json
+                path: keystore.json
+              - key: meta.json
+                path: meta.json
+              - key: wallet_REPLACE_WITH_WALLET_UUID_json
+                path: wallets/REPLACE_WITH_WALLET_UUID.json
+              - key: account_REPLACE_WITH_UTC_KEY
+                path: accounts/UTC--REPLACE_WITH_ACCOUNT_KEY
+              - key: index.lock
+                path: index.lock
         - name: passphrase
           secret:
             secretName: daxie-passphrase

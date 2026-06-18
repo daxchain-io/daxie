@@ -23,7 +23,7 @@ the four state classes by durability and writability. They live in [`k8s/`](k8s/
 | Class | Primitive | Why |
 |---|---|---|
 | **config** | ConfigMap, mounted **read-only** | A signing op never writes config; the read-only ConfigMap is the one mount the agent cannot write — it structurally protects `policy-anchor.json`, the policy trust root. |
-| **keystore** | Secret (or PVC), mounted **read-only** | Travels with key material in a backup; read-only at runtime (metadata mutations fail `keystore.read_only` by design). |
+| **keystore** | Secret/external secret sync or PVC, mounted **read-only** | Travels with key material in a backup; read-only at runtime (metadata mutations fail `keystore.read_only` by design). |
 | **state** | **PVC** (ReadWriteOnce) | The agent's runtime job writes it and it **must survive restarts** — the durable spend counters live here; a fresh PVC re-opens the rolling-24h window. |
 | **cache** | `emptyDir` | Reconstructible from chain; losing it costs only latency. |
 
@@ -71,6 +71,12 @@ The only writable mounts are the **state PVC** (durable) and the **cache emptyDi
 - The **keystore passphrase** is a Secret key, surfaced as a file via
   `DAXIE_PASSPHRASE_FILE` (mount the Secret and point the env var at it) — never
   `DAXIE_PASSPHRASE` and never a flag value. Use a **≥ 128-bit** passphrase.
+- The **keystore itself is a complete directory**, not only `keystore.json` and
+  `meta.json`. It also includes `wallets/<uuid>.json`, `accounts/UTC--...`, and
+  `index.lock`. The checked-in Secret manifest is a placeholder that projects flat
+  Secret keys into nested paths with `secret.items[].path`; add every wallet/account
+  file from the backup or use an external secret sync / CSI store / restored PVC for
+  the full directory.
 - The **admin passphrase is never in the agent pod.** Run policy mutations from a
   one-off `Job` (or a workstation) that mounts the admin Secret; the long-running
   Deployment does not. See [policy-k8s.md](policy-k8s.md).
@@ -95,9 +101,11 @@ kubectl apply -f k8s/pvc.yaml
 kubectl apply -f k8s/deployment.yaml
 ```
 
-Edit the placeholder base64 in `secret.yaml`, the anchor/config in `configmap.yaml`,
-and the storage class / size in `pvc.yaml` before applying — they ship with obvious
-placeholders, not real material.
+Edit the placeholder base64 and item list in `secret.yaml`, the anchor/config in
+`configmap.yaml`, and the storage class / size in `pvc.yaml` before applying — they
+ship with obvious placeholders, not real material. If you use a Secret for the
+keystore, include every file from the keystore backup; a partial Secret can mount
+successfully while leaving Daxie unable to find the selected wallet/account.
 
 ---
 
