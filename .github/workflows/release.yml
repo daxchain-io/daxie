@@ -291,15 +291,14 @@ jobs:
   # ── cask-publish ────────────────────────────────────────────────────────────
   # Pushes the Homebrew cask to daxchain-io/homebrew-tap. STABLE-ONLY: a
   # prerelease tag (anything with a '-') never moves the cask. Holds the
-  # HOMEBREW_TAP_GITHUB_TOKEN — the ONLY place it is referenced. Independently
-  # re-runnable: a PAT failure fails ONLY this job and never re-touches the
-  # already-published release. It re-runs goreleaser with the GitHub-release pipe
-  # DISABLED (DAXIE_RELEASE_DISABLE=true) and the cask upload ENABLED
-  # (DAXIE_CASK_SKIP_UPLOAD=false), skipping docker/sbom/sign/announce. It DOES
-  # rebuild the binaries+archives (a fresh runner has no prior dist/, and the
-  # cask's sha256/URL derive from them) — but with the release pipe off, the cask
-  # commit to the tap is the run's ONLY remote side effect, so `contents: read`
-  # suffices and the run can never mutate the signed, Rekor-logged release.
+  # HOMEBREW_TAP_GITHUB_TOKEN — the ONLY place it is referenced. It re-runs
+  # goreleaser with the GitHub-release pipe DISABLED (DAXIE_RELEASE_DISABLE=true)
+  # and the cask upload still DISABLED (DAXIE_CASK_SKIP_UPLOAD=true), so
+  # goreleaser only renders dist/homebrew/Casks/daxie.rb locally. The workflow
+  # then rewrites the cask SHA values from the immutable release checksums.txt and
+  # pushes that corrected file to the tap. That avoids deriving cask checksums
+  # from a second rebuild while still keeping the tap PAT out of the write-heavy
+  # release/sign/GHCR job.
   cask-publish:
     name: cask-publish (stable only)
     needs: [goreleaser]
@@ -324,42 +323,91 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
 
-      - name: Publish the cask
+      - name: Render the cask
         uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
         with:
           distribution: goreleaser
           version: ${{ env.GORELEASER_VERSION }}
-          # Re-run goreleaser to push ONLY the homebrew cask. The skip set uses
+          # Re-run goreleaser to render ONLY the homebrew cask. The skip set uses
           # ONLY valid goreleaser v2 options (run `goreleaser release --help`:
           # there is no `build` skip — the prior `--skip=build` was rejected with
-          # "--skip=build is not allowed", so the cask never published). We DROP
+          # "--skip=build is not allowed", so the cask never rendered). We DROP
           # docker/sbom/sign/announce (no GHCR re-push, no re-sign, no re-attest,
-          # no re-announce) and we do NOT pass `--skip=publish` because the cask
-          # push IS a publish. We do NOT skip build/archive: this is a fresh
-          # runner with no prior dist/, and the cask's sha256 + URL are computed
-          # from freshly built archives. `--clean` is therefore safe — nothing
-          # here relies on a previous dist/.
+          # no re-announce). We do NOT skip build/archive: this is a fresh runner
+          # with no prior dist/, and goreleaser needs archives to render the cask.
+          # The rendered SHA values are normalized from the already-published
+          # release checksums before anything is pushed to the tap.
           #
           # The two env vars below (see .goreleaser.yml) make this run cask-only:
           #   DAXIE_RELEASE_DISABLE=true   → release.disable: the GitHub Release
           #     pipe is OFF, so this job CANNOT delete/recreate (mode: replace) or
           #     re-upload to the already-published, Rekor-logged, SLSA-attested
           #     release. That is why `contents: read` suffices.
-          #   DAXIE_CASK_SKIP_UPLOAD=false → flips homebrew_casks.skip_upload from
-          #     its render-only default to a real cross-repo push to the tap.
-          # Net: the ONLY remote side effect of this job is the cask commit.
+          #   DAXIE_CASK_SKIP_UPLOAD=true → keeps goreleaser render-only; the
+          #     workflow's next step does the checksum normalization and tap push.
           args: release --clean --skip=docker,sbom,sign,announce
         env:
-          # The cross-repo PAT — fine-grained, Contents:Read-and-Write on
-          # daxchain-io/homebrew-tap. The default GITHUB_TOKEN cannot push
-          # across repos. This is the ONLY job that references it.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           # Disable the GitHub-release pipe so this job never re-touches the
           # release the goreleaser job already published (fail-forward, §9.5).
           DAXIE_RELEASE_DISABLE: "true"
-          # Flip the cask from render-only to a real push to the tap.
-          DAXIE_CASK_SKIP_UPLOAD: "false"
+          # Keep goreleaser render-only; the workflow pushes after normalizing.
+          DAXIE_CASK_SKIP_UPLOAD: "true"
+
+      - name: Normalize cask checksums from release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset_dir="$RUNNER_TEMP/daxie-release-assets"
+          mkdir -p "$asset_dir"
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern checksums.txt \
+            --dir "$asset_dir" \
+            --clobber
+          scripts/release/rewrite_cask_checksums.py \
+            --cask dist/homebrew/Casks/daxie.rb \
+            --checksums "$asset_dir/checksums.txt" \
+            --version "${{ github.ref_name }}"
+
+      - name: Push the cask to the tap
+        env:
+          # Fine-grained PAT, Contents:Read-and-Write on daxchain-io/homebrew-tap.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tap_dir="$RUNNER_TEMP/homebrew-tap"
+          git clone \
+            "https://x-access-token:${HOMEBREW_TAP_GITHUB_TOKEN}@github.com/daxchain-io/homebrew-tap.git" \
+            "$tap_dir"
+          mkdir -p "$tap_dir/Casks"
+          cp dist/homebrew/Casks/daxie.rb "$tap_dir/Casks/daxie.rb"
+          cd "$tap_dir"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -z "$(git status --porcelain -- Casks/daxie.rb)" ]; then
+            echo "Casks/daxie.rb already matches ${{ github.ref_name }}"
+          else
+            git add Casks/daxie.rb
+            git commit -m "Update daxie to ${{ github.ref_name }}"
+            git push origin HEAD:main
+          fi
+
+      - name: Verify published cask checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          published="$RUNNER_TEMP/published-daxie.rb"
+          checksums="$RUNNER_TEMP/daxie-release-assets/checksums.txt"
+          gh api repos/daxchain-io/homebrew-tap/contents/Casks/daxie.rb \
+            --jq .content | base64 --decode > "$published"
+          scripts/release/rewrite_cask_checksums.py \
+            --check \
+            --cask "$published" \
+            --checksums "$checksums" \
+            --version "${{ github.ref_name }}"
 
   # ── install-smoke ───────────────────────────────────────────────────────────
   # Post-publication validation: curl the JUST-CUT install.sh from the release

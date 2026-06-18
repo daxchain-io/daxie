@@ -197,14 +197,16 @@ homebrew_casks:
     # it). It defaults to "true" (render-only): the goreleaser job — and every
     # local `goreleaser release --snapshot` — computes dist/homebrew/Casks/daxie.rb
     # but does NOT push it. The dedicated, stable-only `cask-publish` job in
-    # release.yml sets DAXIE_CASK_SKIP_UPLOAD=false to flip this to a real
-    # cross-repo push, so a tap-PAT failure fails ONLY that job and never forces a
-    # rebuild. goreleaser treats the rendered string truthy iff it equals "true".
+    # release.yml also keeps this render-only, rewrites the generated cask SHA
+    # values from the immutable release checksums.txt, and then pushes the
+    # corrected file to the tap. goreleaser treats the rendered string truthy iff
+    # it equals "true".
     skip_upload: '{{ envOrDefault "DAXIE_CASK_SKIP_UPLOAD" "true" }}'
     # Cross-repo push needs HOMEBREW_TAP_GITHUB_TOKEN (a fine-grained PAT with
     # Contents:Read-and-Write on daxchain-io/homebrew-tap); the source repo's
-    # default GITHUB_TOKEN cannot push across repos. goreleaser v2 dropped the v1
-    # auto-detection, so the token MUST be wired explicitly via repository.token.
+    # default GITHUB_TOKEN cannot push across repos. release.yml does that push
+    # itself after normalizing checksums, so this token is only required if a
+    # future workflow flips DAXIE_CASK_SKIP_UPLOAD=false and lets GoReleaser push.
     repository:
       owner: daxchain-io
       name: homebrew-tap
@@ -220,9 +222,9 @@ homebrew_casks:
     # SLSA-attested release), and goreleaser otherwise refuses the default cask
     # url_template when the release block is disabled ("release is disabled, cannot
     # use default url_template"). The rendered URL is byte-identical to the default
-    # (releases/download/<tag>/<archive>) — the goreleaser job uploads these assets;
-    # the cask just points at them. {{ .Tag }} is the v-prefixed tag; {{ .ArtifactName }}
-    # is the per-arch archive filename.
+    # (releases/download/<tag>/<archive>) — the main goreleaser job uploads these
+    # assets; the cask just points at them. {{ .Tag }} is the v-prefixed tag;
+    # {{ .ArtifactName }} is the per-arch archive filename.
     url:
       template: "https://github.com/daxchain-io/daxie/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     homepage: https://github.com/daxchain-io/daxie
