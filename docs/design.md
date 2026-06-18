@@ -4012,7 +4012,7 @@ list).
 | Signing | **cosign keyless (GitHub OIDC)** — no signing-key secret exists |
 | Provenance / SBOM | SLSA L3 via `slsa-github-generator`; syft SBOM per archive |
 | Homebrew | `homebrew_casks:` render-only (`skip_upload: true`); a separate `cask-publish` job (stable tags only) pushes to `daxchain-io/homebrew-daxie` with `HOMEBREW_TAP_GITHUB_TOKEN` — independently re-runnable, never triggers a rebuild |
-| OCI image | `ghcr.io/daxchain-io/daxie`, multi-arch via goreleaser **`dockers_v2:`** (the v3-default successor, not the deprecated `dockers:`/`docker_manifests:`), base `gcr.io/distroless/static-debian12:nonroot` (digest-pinned), cosign-signed manifest via the shared top-level `docker_signs:` |
+| OCI image | `ghcr.io/daxchain-io/images/daxie`, multi-arch via goreleaser **`dockers_v2:`** (the v3-default successor, not the deprecated `dockers:`/`docker_manifests:`), base `gcr.io/distroless/static-debian12:nonroot` (digest-pinned), cosign-signed manifest via the shared top-level `docker_signs:` |
 | Installer | `scripts/install.sh` published as a release asset; envs under **`DAXIE_INSTALL_*`** (a sub-namespace, never bare `DAXIE_*`, §9.4) |
 | Channels | `stable` = `vX.Y.Z`; `beta` = `vX.Y.Z-beta.N`/`-rc.N`. Brew, `:latest`, `:X.Y` track stable only |
 | CI | `ci.yml`, `ci-install-script.yml`, `release.yml` (+ `release-helm.yml` reserved for v1.1) |
@@ -4109,7 +4109,7 @@ sboms: [{ artifacts: archive }]
 dockers_v2:                                      # one multi-platform entry (NOT the deprecated triple)
   - id: daxie
     dockerfile: Dockerfile.release              # COPY-only; goreleaser stages the prebuilt binary per $TARGETPLATFORM
-    images: [ghcr.io/daxchain-io/daxie]
+    images: [ghcr.io/daxchain-io/images/daxie]
     platforms: [linux/amd64, linux/arm64]
     tags:
       - "{{ .Version }}"

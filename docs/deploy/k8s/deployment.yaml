@@ -38,7 +38,7 @@ spec:
           # Replace <version> with an exact published tag, for example
           # 1.0.0-rc.N during the RC phase or 1.0.0 after stable promotion.
           # Prefer @sha256:<digest> in production once verified with cosign.
-          image: ghcr.io/daxchain-io/daxie:<version>
+          image: ghcr.io/daxchain-io/images/daxie:<version>
           args: ["mcp", "serve"]
           securityContext:
             allowPrivilegeEscalation: false

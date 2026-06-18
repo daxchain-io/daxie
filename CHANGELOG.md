@@ -31,7 +31,7 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   (transitively covering every archive and `install.sh`) via the Rekor transparency
   log; syft SBOMs; SLSA provenance; the identity pinned to this repo's release workflow
   at a `v`-tag ref.
-- **Container image** `ghcr.io/daxchain-io/daxie`: multi-arch (amd64/arm64),
+- **Container image** `ghcr.io/daxchain-io/images/daxie`: multi-arch (amd64/arm64),
   distroless/static, non-root (uid 65532), cosign-signed by digest; `:X.Y` and `:latest`
   track the stable channel only.
 - **`scripts/install.sh`:** universal POSIX installer published as a release asset —

@@ -53,7 +53,7 @@ Why it matters:
   never `DAXIE_PASSPHRASE` (env is least-safe) and never a flag value
 - the **admin passphrase is absent** from the agent pod — policy administration is an
   out-of-band operator act ([policy-k8s.md](policy-k8s.md))
-- pin the image by **digest** (`ghcr.io/daxchain-io/daxie@sha256:…`) and
+- pin the image by **digest** (`ghcr.io/daxchain-io/images/daxie@sha256:…`) and
   cosign-verify it (see [../install.md](../install.md))
 
 ## One writer per account

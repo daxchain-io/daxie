@@ -36,7 +36,7 @@ PVC but cannot write the ConfigMap, and cannot reach the anchor by any env var o
 zero-outage admin-passphrase rotation.
 
 During the release-candidate phase, replace image placeholders with an exact
-published prerelease tag such as `ghcr.io/daxchain-io/daxie:1.0.0-rc.N`, or with a
+published prerelease tag such as `ghcr.io/daxchain-io/images/daxie:1.0.0-rc.N`, or with a
 verified digest. Floating Docker tags (`:latest`, `:X.Y`) move only on stable
 releases.
 
@@ -89,7 +89,7 @@ The only writable mounts are the **state PVC** (durable) and the **cache emptyDi
 
 ```sh
 # Pin the image by digest and verify before rollout (see ../install.md):
-cosign verify ghcr.io/daxchain-io/daxie@sha256:... \
+cosign verify ghcr.io/daxchain-io/images/daxie@sha256:... \
   --certificate-identity-regexp '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 

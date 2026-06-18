@@ -55,7 +55,7 @@ for the download-verify-run recipe and cosign signature verification).
 > Homebrew, the `curl | sh` `/releases/latest` URL, the `:latest` and `:1.0`
 > Docker tags, and `go install` with `@latest`. Until stable `v1.0.0` ships, pin
 > an exact published prerelease: release assets for `v1.0.0-rc.N`, the
-> `ghcr.io/daxchain-io/daxie:1.0.0-rc.N` image, or `@v1.0.0-rc.N` for
+> `ghcr.io/daxchain-io/images/daxie:1.0.0-rc.N` image, or `@v1.0.0-rc.N` for
 > `go install`. The commands below document stable-channel forms unless they show
 > an explicit version variable.
 
@@ -86,8 +86,8 @@ and `DAXIE_INSTALL_*` env vars are documented in [docs/install.md](docs/install.
 
 ```sh
 VERSION=1.0.0-rc.N # use 1.0.0 after stable promotion
-docker pull "ghcr.io/daxchain-io/daxie:${VERSION}"
-docker run --rm "ghcr.io/daxchain-io/daxie:${VERSION}" version
+docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
+docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
 ```
 
 Multi-arch (amd64 + arm64), **distroless/static, non-root (uid 65532)**, no shell,
