@@ -14,7 +14,10 @@
 
 services:
   daxie:
-    image: ghcr.io/daxchain-io/daxie:1.0.0 # prefer a @sha256:<digest> pin in production
+    # Replace <version> with an exact published tag, for example 1.0.0-rc.N during
+    # the RC phase or 1.0.0 after stable promotion. Prefer @sha256:<digest> in
+    # production once you have verified the image with cosign.
+    image: ghcr.io/daxchain-io/daxie:<version>
     # The image ENTRYPOINT is /usr/bin/daxie; override the command for your transport.
     # v1 stdio MCP is normally launched by the agent harness; `version` here is a
     # liveness/smoke command. Replace with your serving invocation as appropriate.

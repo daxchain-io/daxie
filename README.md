@@ -11,12 +11,12 @@ one-core/two-frontends architecture so the CLI and the MCP server traverse the
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8.svg)](https://go.dev/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Status: v1.0.0-rc.1 — release candidate.** The CLI surface, JSON schemas,
-> exit codes, MCP tool set, config schema, and on-disk state formats are frozen
-> for v1.0 (semver-protected; see [Versioning](#versioning)). Custody in v1 is an
-> **encrypted local keystore inside one OS trust domain** (same uid as the
-> agent). That boundary is stated honestly — see [Security model](#security-model)
-> and the v2 signer-daemon path. Use a testnet and a small mainnet float while you
+> **Status: v1.0 release-candidate phase.** The CLI surface, JSON schemas, exit
+> codes, MCP tool set, config schema, and on-disk state formats are frozen for
+> v1.0 (semver-protected; see [Versioning](#versioning)). Custody in v1 is an
+> **encrypted local keystore inside one OS trust domain** (same uid as the agent).
+> That boundary is stated honestly — see [Security model](#security-model) and
+> the v2 signer-daemon path. Use a testnet and a small mainnet float while you
 > evaluate.
 
 ---
@@ -50,14 +50,14 @@ branch on.
 Four supported paths. **Verify before you run** (see [docs/install.md](docs/install.md)
 for the download-verify-run recipe and cosign signature verification).
 
-> **While `v1.0.0-rc.1` is the newest tag,** the *floating* install channels
-> resolve to **stable releases only** — they will not see a release candidate.
-> That covers Homebrew, the `curl | sh` `/releases/latest` URL, the `:latest` and
-> `:1.0` Docker tags, and `go install` with `@latest`. Until stable `v1.0.0`
-> ships, pin the prerelease explicitly: the
-> [`v1.0.0-rc.1` release assets](https://github.com/daxchain-io/daxie/releases/tag/v1.0.0-rc.1),
-> the `ghcr.io/daxchain-io/daxie:1.0.0-rc.1` image, or `@v1.0.0-rc.1` for
-> `go install`. The commands below document the stable-channel forms.
+> **During the release-candidate phase,** the *floating* install channels resolve
+> to **stable releases only** — they will not see a release candidate. That covers
+> Homebrew, the `curl | sh` `/releases/latest` URL, the `:latest` and `:1.0`
+> Docker tags, and `go install` with `@latest`. Until stable `v1.0.0` ships, pin
+> an exact published prerelease: release assets for `v1.0.0-rc.N`, the
+> `ghcr.io/daxchain-io/daxie:1.0.0-rc.N` image, or `@v1.0.0-rc.N` for
+> `go install`. The commands below document stable-channel forms unless they show
+> an explicit version variable.
 
 ### Homebrew (macOS / Linux)
 
@@ -85,8 +85,9 @@ and `DAXIE_INSTALL_*` env vars are documented in [docs/install.md](docs/install.
 ### Container image (GHCR)
 
 ```sh
-docker pull ghcr.io/daxchain-io/daxie:1.0.0
-docker run --rm ghcr.io/daxchain-io/daxie:1.0.0 version
+VERSION=1.0.0-rc.N # use 1.0.0 after stable promotion
+docker pull "ghcr.io/daxchain-io/daxie:${VERSION}"
+docker run --rm "ghcr.io/daxchain-io/daxie:${VERSION}" version
 ```
 
 Multi-arch (amd64 + arm64), **distroless/static, non-root (uid 65532)**, no shell,
@@ -280,7 +281,7 @@ each with the right durability and writability. This is the backbone of the
 | Class | Override var | Contents | K8s mount |
 |---|---|---|---|
 | **config** | `DAXIE_CONFIG` | `config.toml` (networks, RPC endpoints, gas/tx defaults) + `policy-anchor.json` (the seal verify key — read directly, never via Viper) | **read-only ConfigMap** |
-| **keystore** | `DAXIE_KEYSTORE` | encrypted keys, `meta.json` (aliases, default account) | Secret mount or PVC (read-only at runtime) |
+| **keystore** | `DAXIE_KEYSTORE` | `keystore.json`, `meta.json`, `wallets/<uuid>.json`, `accounts/UTC--...`, `index.lock` | Secret/external secret sync or PVC (read-only at runtime) |
 | **state** | `DAXIE_STATE_DIR` (+ `DAXIE_REGISTRY_DIR`) | tx journal + nonces, sealed `policy.json` + **durable spend counters**, token/NFT/contact registries | **PVC (must persist)** |
 | **cache** | `DAXIE_CACHE_DIR` | ENS / metadata / fee-history caches (reconstructible) | emptyDir / tmpfs |
 

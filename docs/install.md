@@ -10,6 +10,12 @@ This guide covers every install path and, importantly, **how to verify what you
 install**. The supply-chain controls only protect you if you use them: residual R9
 (in [security.md](security.md)) is exactly "users who skip verification".
 
+During the release-candidate phase, floating channels resolve to stable releases
+only: Homebrew, `/releases/latest`, Docker `:latest` / `:X.Y`, and
+`go install ...@latest` do not move to prereleases. Until stable `v1.0.0` ships,
+use exact published prerelease tags instead: `v1.0.0-rc.N` for release
+assets/install.sh/go install and `1.0.0-rc.N` for the GHCR image tag.
+
 - [Homebrew (cask)](#homebrew-cask)
 - [curl one-liner](#curl-one-liner)
 - [Download-verify-run (recommended for production)](#download-verify-run)
@@ -131,8 +137,9 @@ tooling; cosign is the **opt-in stronger** layer.
 ## Container image (GHCR)
 
 ```sh
-docker pull ghcr.io/daxchain-io/daxie:1.0.0
-docker run --rm ghcr.io/daxchain-io/daxie:1.0.0 version
+VERSION=1.0.0-rc.N # use 1.0.0 after stable promotion
+docker pull "ghcr.io/daxchain-io/daxie:${VERSION}"
+docker run --rm "ghcr.io/daxchain-io/daxie:${VERSION}" version
 ```
 
 Tags: an immutable `:X.Y.Z` per release; floating `:X.Y` and `:latest` track the
@@ -141,7 +148,7 @@ Tags: an immutable `:X.Y.Z` per release; floating `:X.Y` and `:latest` track the
 no baked-in secrets, and is cosign-signed by digest:
 
 ```sh
-cosign verify ghcr.io/daxchain-io/daxie:1.0.0 \
+cosign verify "ghcr.io/daxchain-io/daxie:${VERSION}" \
   --certificate-identity-regexp '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```

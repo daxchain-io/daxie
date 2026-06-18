@@ -28,7 +28,7 @@ class — this is the single rule the manifests implement:
 | Class | Override | Contents | Mount | Writable? |
 |---|---|---|---|---|
 | **config** | `DAXIE_CONFIG` | `config.toml`, `policy-anchor.json` (the seal verify key — the policy trust root) | **read-only ConfigMap** | no (a signing op never writes config) |
-| **keystore** | `DAXIE_KEYSTORE` | encrypted keys, `meta.json` | Secret mount or PVC | read-only at runtime |
+| **keystore** | `DAXIE_KEYSTORE` | `keystore.json`, `meta.json`, `wallets/<uuid>.json`, `accounts/UTC--...`, `index.lock` | Secret/external secret sync or PVC | read-only at runtime |
 | **state** | `DAXIE_STATE_DIR` | tx journal + nonces, sealed `policy.json` + **durable spend counters**, registries | **PVC** | yes — and **must persist** (a reset counter re-widens the daily window) |
 | **cache** | `DAXIE_CACHE_DIR` | ENS / metadata / fee-history caches | emptyDir / tmpfs | yes — disposable |
 

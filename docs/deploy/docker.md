@@ -22,7 +22,7 @@ job, kept here in one place.
 | Class | Host source | Container path (`DAXIE_*`) | Mode |
 |---|---|---|---|
 | config | `./config` (config.toml + policy-anchor.json) | `/etc/daxie` (`DAXIE_CONFIG`) | **read-only** |
-| keystore | `daxie-keystore` volume / Secret file | `/var/lib/daxie/keystore` (`DAXIE_KEYSTORE`) | read-only |
+| keystore | `daxie-keystore` volume / full-directory secret sync | `/var/lib/daxie/keystore` (`DAXIE_KEYSTORE`) | read-only |
 | state | `daxie-state` named volume (**durable**) | `/var/lib/daxie/state` (`DAXIE_STATE_DIR`) | read-write |
 | cache | tmpfs | `/var/cache/daxie` (`DAXIE_CACHE_DIR`) | read-write (disposable) |
 | passphrase | Docker secret | `/run/secrets/daxie-pass` (`DAXIE_PASSPHRASE_FILE`) | read-only |
