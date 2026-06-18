@@ -62,7 +62,7 @@ for the download-verify-run recipe and cosign signature verification).
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew install --cask daxchain-io/daxie/daxie
+brew install --cask daxchain-io/tap/daxie
 ```
 
 The cask pins the release URL **and** its SHA256; a tampered tap is detectable by

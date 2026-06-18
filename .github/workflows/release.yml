@@ -289,7 +289,7 @@ jobs:
       private-repository: true
 
   # ── cask-publish ────────────────────────────────────────────────────────────
-  # Pushes the Homebrew cask to daxchain-io/homebrew-daxie. STABLE-ONLY: a
+  # Pushes the Homebrew cask to daxchain-io/homebrew-tap. STABLE-ONLY: a
   # prerelease tag (anything with a '-') never moves the cask. Holds the
   # HOMEBREW_TAP_GITHUB_TOKEN — the ONLY place it is referenced. Independently
   # re-runnable: a PAT failure fails ONLY this job and never re-touches the
@@ -351,7 +351,7 @@ jobs:
           args: release --clean --skip=docker,sbom,sign,announce
         env:
           # The cross-repo PAT — fine-grained, Contents:Read-and-Write on
-          # daxchain-io/homebrew-daxie. The default GITHUB_TOKEN cannot push
+          # daxchain-io/homebrew-tap. The default GITHUB_TOKEN cannot push
           # across repos. This is the ONLY job that references it.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

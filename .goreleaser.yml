@@ -202,12 +202,12 @@ homebrew_casks:
     # rebuild. goreleaser treats the rendered string truthy iff it equals "true".
     skip_upload: '{{ envOrDefault "DAXIE_CASK_SKIP_UPLOAD" "true" }}'
     # Cross-repo push needs HOMEBREW_TAP_GITHUB_TOKEN (a fine-grained PAT with
-    # Contents:Read-and-Write on daxchain-io/homebrew-daxie); the source repo's
+    # Contents:Read-and-Write on daxchain-io/homebrew-tap); the source repo's
     # default GITHUB_TOKEN cannot push across repos. goreleaser v2 dropped the v1
     # auto-detection, so the token MUST be wired explicitly via repository.token.
     repository:
       owner: daxchain-io
-      name: homebrew-daxie
+      name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     # directory defaults to "Casks" — DO NOT override to "Formula" (the legacy
