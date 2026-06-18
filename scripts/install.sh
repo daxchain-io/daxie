@@ -54,8 +54,9 @@
 #                       Setting this lets you point the script at a
 #                       `goreleaser release --snapshot --clean` dist/ served over a local
 #                       http server (see the ci-install-script.yml snapshot-install job for
-#                       the recipe). cosign verification is auto-skipped under this override
-#                       since snapshot artifacts are unsigned.
+#                       the recipe). Cosign verification still works when the pointed-at
+#                       directory contains signed release assets; local snapshots normally
+#                       require omitting --verify-signature.
 #
 # Windows is NOT installable via install.sh (no Linux/Darwin uname match) — it exits 2
 # and points you at the release .zip archive. Download daxie_<ver>_windows_<arch>.zip from
@@ -410,9 +411,8 @@ resolve_install_dir() {
 # daxie_arch / daxie_version into daxie_workdir and (unless --no-verify) checks
 # the sha256 entry from the release's checksums.txt. With --verify-signature,
 # additionally cosign-verifies the checksums file against this repo's exact
-# release-workflow OIDC identity; skipped silently when DAXIE_INSTALL_BASE_URL
-# points at an unsigned local snapshot. Falls through to a tar -xzf and asserts
-# the BIN_NAME file landed in daxie_workdir.
+# release-workflow OIDC identity. Falls through to a tar -xzf and asserts the
+# BIN_NAME file landed in daxie_workdir.
 download_and_verify() {
   # goreleaser archive name template:
   #   daxie_<version_no_v>_<os>_<arch>.tar.gz
@@ -452,11 +452,6 @@ download_and_verify() {
       die 4 "SHA256 verification failed for ${_archive}"
   else
     warn "skipping SHA256 verification (--no-verify) — the download is unverified and NOT recommended"
-  fi
-
-  if [ -n "$daxie_verify_sig" ] && [ -n "$daxie_base_url" ]; then
-    warn "skipping cosign verification: DAXIE_INSTALL_BASE_URL is set (snapshot artifacts are unsigned)"
-    daxie_verify_sig=""
   fi
 
   if [ -n "$daxie_verify_sig" ]; then
