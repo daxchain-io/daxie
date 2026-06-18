@@ -1,0 +1,29 @@
+title = "Daxie gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public deterministic Ethereum test fixtures"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''docs/demos/m01\.sh''',
+  '''docs/demos/m09\.sh''',
+  '''docs/demos/m10\.sh''',
+  '''internal/cli/account_test\.go''',
+  '''internal/cli/tx_integration_test\.go''',
+  '''internal/keys/fixture_test\.go''',
+  '''internal/policy/recognizers_test\.go''',
+  '''internal/service/account_test\.go''',
+  '''internal/service/tx_integration_test\.go''',
+]
+regexes = [
+  '''(0x)?4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318''',
+  '''0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+  '''00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff''',
+  '''0x0000000000000000000000000000000000000000000000000000000000000000''',
+  '''0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48''',
+  '''0xb0b86991c6218b36c1d19d4a2e9eb0ce3606eb48''',
+]
