@@ -4,7 +4,7 @@ This pattern runs Daxie's MCP server in (or alongside) the agent container with 
 four state classes mounted correctly and a hardened runtime. The companion
 [`compose.yaml`](compose.yaml) is a runnable starting point.
 
-The image (`ghcr.io/daxchain-io/daxie`) is distroless/static, non-root (uid 65532),
+The image (`ghcr.io/daxchain-io/images/daxie`) is distroless/static, non-root (uid 65532),
 has no shell, and bakes in **no** `DAXIE_*` defaults — path wiring is the deployment's
 job, kept here in one place.
 
@@ -81,10 +81,10 @@ DAXIE_ADMIN_PASSPHRASE_FILE=./admin-pass \
 Pin the image by digest and verify it before running:
 
 ```sh
-cosign verify ghcr.io/daxchain-io/daxie@sha256:... \
+cosign verify ghcr.io/daxchain-io/images/daxie@sha256:... \
   --certificate-identity-regexp '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
-docker run --rm ghcr.io/daxchain-io/daxie@sha256:... version
+docker run --rm ghcr.io/daxchain-io/images/daxie@sha256:... version
 ```
 
 See [`compose.yaml`](compose.yaml) for the full example, and [kubernetes.md](kubernetes.md)

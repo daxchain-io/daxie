@@ -55,6 +55,7 @@ env:
   GO_VERSION: "1.26"
   # goreleaser action minor pinned per design §9.1 (never bare "~> v2").
   GORELEASER_VERSION: "~> v2.16"
+  DAXIE_IMAGE_REPOSITORY: ghcr.io/daxchain-io/images/daxie
 
 jobs:
   # ── verify ────────────────────────────────────────────────────────────────
@@ -185,7 +186,7 @@ jobs:
     environment: release
     permissions:
       contents: write # create the GitHub Release + upload assets
-      packages: write # push the image to ghcr.io/daxchain-io/daxie
+      packages: write # push the image to ghcr.io/daxchain-io/images/daxie
       id-token: write # OIDC for cosign keyless signing (no key to steal)
     # Expose the SHA256 subjects of the release archives so the provenance job's
     # slsa-github-generator can sign a SLSA predicate over the just-built
@@ -585,7 +586,7 @@ jobs:
 
       - name: Run the image
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v}"
+          IMAGE="${DAXIE_IMAGE_REPOSITORY}:${GITHUB_REF_NAME#v}"
           pulled=0
           for _ in $(seq 1 30); do
             if docker pull "$IMAGE"; then
@@ -603,7 +604,7 @@ jobs:
       - name: cosign verify the image manifest by digest
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v}"
+          IMAGE="${DAXIE_IMAGE_REPOSITORY}:${GITHUB_REF_NAME#v}"
           DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")"
           echo "Verifying $DIGEST"
           cosign verify \

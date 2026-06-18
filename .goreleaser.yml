@@ -121,7 +121,7 @@ dockers_v2:
   - id: daxie
     dockerfile: Dockerfile.release
     images:
-      - ghcr.io/daxchain-io/daxie
+      - ghcr.io/daxchain-io/images/daxie
     platforms:
       - linux/amd64
       - linux/arm64

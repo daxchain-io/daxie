@@ -138,8 +138,8 @@ tooling; cosign is the **opt-in stronger** layer.
 
 ```sh
 VERSION=1.0.0-rc.N # use 1.0.0 after stable promotion
-docker pull "ghcr.io/daxchain-io/daxie:${VERSION}"
-docker run --rm "ghcr.io/daxchain-io/daxie:${VERSION}" version
+docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
+docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
 ```
 
 Tags: an immutable `:X.Y.Z` per release; floating `:X.Y` and `:latest` track the
@@ -148,14 +148,14 @@ Tags: an immutable `:X.Y.Z` per release; floating `:X.Y` and `:latest` track the
 no baked-in secrets, and is cosign-signed by digest:
 
 ```sh
-cosign verify "ghcr.io/daxchain-io/daxie:${VERSION}" \
+cosign verify "ghcr.io/daxchain-io/images/daxie:${VERSION}" \
   --certificate-identity-regexp '^https://github.com/daxchain-io/daxie/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
 The image sets **no** `DAXIE_*` env defaults — path wiring is the deployment's job.
 See [deploy/](deploy/) for the four-mount pattern (config / keystore / state / cache).
-Pin a digest (`ghcr.io/daxchain-io/daxie@sha256:...`) in production.
+Pin a digest (`ghcr.io/daxchain-io/images/daxie@sha256:...`) in production.
 
 ---
 
