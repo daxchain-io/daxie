@@ -74,10 +74,13 @@ a checksum mismatch (residual R9 covers users who skip verification).
 curl -fsSL https://github.com/daxchain-io/daxie/releases/latest/download/install.sh | sh
 ```
 
-`install.sh` **verifies the SHA256 of the archive by default**. It installs to
-`/usr/local/bin` if writable, otherwise falls back to `~/.local/bin` (no sudo). For
-the stronger keyless-cosign signature check, run with `--verify-signature`. Flags
-and `DAXIE_INSTALL_*` env vars are documented in [docs/install.md](docs/install.md).
+`install.sh` **verifies the download by default**: it checks the SHA256 against the
+signed `checksums.txt`, and when `cosign` is on PATH it *also* verifies the keyless
+signature automatically — falling back to checksum-only with a warning when cosign is
+absent. Pass `--verify-signature` to make the signature check mandatory (fail if
+cosign is missing). It installs to `/usr/local/bin` if writable, otherwise falls back
+to `~/.local/bin` (no sudo). Flags and `DAXIE_INSTALL_*` env vars are documented in
+[docs/install.md](docs/install.md).
 
 > Prefer not to pipe to a shell? Download `install.sh`, verify its signature, read
 > it, then run it — the recipe is in [docs/install.md](docs/install.md).

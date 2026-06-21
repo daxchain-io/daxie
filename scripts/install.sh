@@ -27,12 +27,14 @@
 #   --use-sudo          Allow `sudo` for /usr/local writes. Default: skip sudo silently
 #                       and fall back to $HOME/.local/bin.
 #                       (env: DAXIE_INSTALL_USE_SUDO=1)
-#   --no-verify         Skip SHA256 verification. NOT recommended — leaves the download
-#                       unverified. Prefer the default (verify) or --verify-signature.
+#   --no-verify         Skip ALL verification (checksum AND signature). NOT recommended —
+#                       leaves the download unverified.
 #                       (env: DAXIE_INSTALL_NO_VERIFY=1)
-#   --verify-signature  Additionally verify the cosign keyless signature on checksums.txt
-#                       against this repo's release workflow identity. Requires `cosign`
-#                       on PATH. (env: DAXIE_INSTALL_VERIFY_SIGNATURE=1)
+#   --verify-signature  REQUIRE the cosign keyless signature check (fail if `cosign` is
+#                       not on PATH). The default already verifies the signature
+#                       automatically when cosign is present, and otherwise falls back to
+#                       checksum-only with a warning; this flag makes the signed-provenance
+#                       check mandatory. (env: DAXIE_INSTALL_VERIFY_SIGNATURE=1)
 #   --dry-run           Print what would happen, change nothing.
 #                       (env: DAXIE_INSTALL_DRY_RUN=1)
 #   --quiet, -q         Suppress progress output (errors still go to stderr).
@@ -454,26 +456,40 @@ download_and_verify() {
     warn "skipping SHA256 verification (--no-verify) — the download is unverified and NOT recommended"
   fi
 
-  if [ -n "$daxie_verify_sig" ]; then
-    if ! command -v cosign >/dev/null 2>&1; then
+  # Signature verification (cosign keyless). The DEFAULT path verifies the signature
+  # opportunistically when cosign is on PATH, and otherwise warns that the download is
+  # checksum-verified only (a corruption check, not authenticity). --verify-signature
+  # makes the check MANDATORY (fail if cosign is absent or the bundle is missing).
+  # --no-verify skips this along with the checksum above. A PRESENT-but-INVALID
+  # signature is always a hard failure (that is tampering); only a MISSING bundle
+  # degrades to checksum-only on the default path (snapshots / pre-signing releases).
+  if [ -z "$daxie_no_verify" ]; then
+    if command -v cosign >/dev/null 2>&1; then
+      # If checksums.txt wasn't downloaded above for any reason, fetch it now so
+      # cosign has the blob to verify.
+      if [ ! -f "${daxie_workdir}/${_checksums}" ]; then
+        fetch "$_checksums_url" "${daxie_workdir}/${_checksums}" ||
+          die 4 "failed to download checksums.txt from $_checksums_url"
+      fi
+      _bundle_url="${_base}/${_checksums}.sigstore.json"
+      if fetch "$_bundle_url" "${daxie_workdir}/${_checksums}.sigstore.json"; then
+        log "Verifying cosign keyless signature on checksums.txt"
+        cosign verify-blob \
+          --bundle "${daxie_workdir}/${_checksums}.sigstore.json" \
+          --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+          --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+          "${daxie_workdir}/${_checksums}" >/dev/null 2>&1 ||
+          die 4 "cosign signature verification failed (identity must match this repo's release workflow)"
+      elif [ -n "$daxie_verify_sig" ]; then
+        die 4 "--verify-signature requested but the signature bundle ${_bundle_url} could not be downloaded"
+      else
+        warn "no cosign signature bundle for this release — verified SHA256 only (a corruption check, not authenticity)"
+      fi
+    elif [ -n "$daxie_verify_sig" ]; then
       die 4 "--verify-signature requested but 'cosign' is not on PATH"
+    else
+      warn "cosign not found — verified SHA256 only (a corruption check, not authenticity); install cosign or pass --verify-signature for the signed-provenance check"
     fi
-    log "Verifying cosign keyless signature on checksums.txt"
-    # If checksums.txt wasn't downloaded above for any reason, fetch it now so
-    # cosign has the blob to verify.
-    if [ ! -f "${daxie_workdir}/${_checksums}" ]; then
-      fetch "$_checksums_url" "${daxie_workdir}/${_checksums}" ||
-        die 4 "failed to download checksums.txt from $_checksums_url"
-    fi
-    _bundle_url="${_base}/${_checksums}.sigstore.json"
-    fetch "$_bundle_url" "${daxie_workdir}/${_checksums}.sigstore.json" ||
-      die 4 "failed to download ${_bundle_url}"
-    cosign verify-blob \
-      --bundle "${daxie_workdir}/${_checksums}.sigstore.json" \
-      --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-      --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-      "${daxie_workdir}/${_checksums}" >/dev/null 2>&1 ||
-      die 4 "cosign signature verification failed (identity must match this repo's release workflow)"
   fi
 
   log "Extracting ${_archive}"

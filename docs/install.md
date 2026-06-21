@@ -60,11 +60,16 @@ curl -fsSL https://github.com/daxchain-io/daxie/releases/latest/download/install
 ```
 
 `install.sh` **verifies the SHA256 of the downloaded archive against the signed
-`checksums.txt` by default.** It resolves the latest *stable* release via the
-`/releases/latest` redirect (no GitHub API call, no rate limit), downloads the
-archive for your OS/arch, verifies it, and installs the binary atomically. It writes
-to `/usr/local/bin` if that is writable, otherwise falls back to `~/.local/bin`
-**without sudo** (and prints a PATH hint if needed).
+`checksums.txt` by default**, and **when `cosign` is on PATH it additionally verifies
+the keyless signature on `checksums.txt` automatically** (falling back to checksum-only
+with a warning when cosign is absent, or when a release has no signature bundle). Pass
+`--verify-signature` to make the signature check mandatory — it then fails if cosign is
+missing or the bundle cannot be fetched. A *present-but-invalid* signature is always a
+hard failure. It resolves the latest *stable* release via the `/releases/latest`
+redirect (no GitHub API call, no rate limit), downloads the archive for your OS/arch,
+verifies it, and installs the binary atomically. It writes to `/usr/local/bin` if that
+is writable, otherwise falls back to `~/.local/bin` **without sudo** (and prints a PATH
+hint if needed).
 
 Pin a version or pass options with `sh -s --`:
 
