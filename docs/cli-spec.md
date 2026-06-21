@@ -1,8 +1,9 @@
-# Daxie — CLI Command Surface (Working Draft)
+# Daxie — CLI Command Surface (v1.0)
 
-> **Status:** draft for iteration. Companion to [requirements.md](requirements.md).
-> This enumerates the proposed v1 command tree so we can react to the user
-> interface before the design session locks it in. Nothing here is final.
+> **Status:** the authoritative v1.0 command/flag/exit-code contract — frozen and
+> semver-protected (see [README versioning](../README.md#versioning)). Companion to
+> [requirements.md](requirements.md); the canonical design is [design.md](design.md).
+> For exact flag spelling, `daxie <command> --help` matches this surface.
 
 ---
 
@@ -47,9 +48,7 @@ are therefore always unambiguous.
 
 Secrets (mnemonics, private keys, passphrases) are **never accepted as flag
 values** — flags leak into shell history and process listings. Accepted
-channels, in precedence order (first present wins — *amended by the design
-session, see keys.md §6, superseding this draft's original
-prompt-first-at-TTY ordering*):
+channels, in precedence order (first present wins):
 
 1. stdin (`--mnemonic-stdin`, `--key-stdin`, `--passphrase-stdin`)
 2. File (`--mnemonic-file`, `--key-file`, `--passphrase-file`) — file perms checked
@@ -164,7 +163,7 @@ daxie tx send ... --yes                              # non-interactive (agents);
 # target, then reports final status (including revert).
 daxie tx send ... --wait                             # wait for the network's default confirmation count
 daxie tx send ... --wait --confirmations 6           # override the count
-daxie tx send ... --wait --timeout 5m                # bounded wait (default timeout TBD by design)
+daxie tx send ... --wait --timeout 5m                # bounded wait (default 10m, set by tx.wait-timeout)
 
 daxie tx status 0xtxhash...                          # pending/confirmed/failed + current confirmation count
 daxie tx wait 0xtxhash...                            # resume waiting on a known hash (e.g. after a timeout)
@@ -211,7 +210,7 @@ daxie gas --network sepolia --json
 
 - Resolution order for the confirmation count: `--confirmations` flag >
   per-network config (`networks.<name>.confirmations`) > built-in default
-  per network (mainnet: 2, Sepolia: 1; proposed — design session confirms).
+  per network (mainnet: 2, Sepolia: 1).
 - `--wait` exit codes are distinct and documented: `0` confirmed, one code
   for **reverted** (tx mined but failed), another for **timeout** (tx
   still pending — NOT a failure; resume with `daxie tx wait <hash>`).
@@ -264,7 +263,7 @@ daxie receive ... --qr                               # also render the receiving
   the threshold is the reorg protection that makes "received" trustworthy.
 - Exit codes mirror `tx wait`: confirmed, vs. timed-out-still-listening
   (not a failure — re-run to resume listening; detection is stateless).
-- **Detection mechanics** (design session decides the details): token/NFT
+- **Detection mechanics:** token/NFT
   arrivals via `Transfer` event log filters; plain ETH arrivals have no
   logs, so detection is balance/block polling — and WebSocket RPC
   endpoints, where available, upgrade polling to subscriptions.
@@ -408,9 +407,9 @@ user-level strings and parses once — see design §2.3). `address`-typed args
 accept account refs, contacts, and ENS names, resolved and echoed before
 signing like any `--to`. `--value` is named for `msg.value` (the ETH
 attached to the call) to keep it distinct from `tx send --amount` and token
-amounts. **[design session]** array / tuple literal syntax (the `'[…]'`
-form above) and large-`uint` ergonomics (decimals are unknowable for an
-arbitrary param — `daxie convert` covers the math).
+amounts. Array / tuple literal syntax (the `'[…]'` form above) is supported;
+for large-`uint` ergonomics, decimals are unknowable for an arbitrary param, so
+`daxie convert` covers the math.
 
 **Policy — this is the broadest-reach signing command in the wallet, so it
 gets the strictest reading of the guardrails (see `daxie policy`):**
@@ -425,7 +424,7 @@ gets the strictest reading of the guardrails (see `daxie policy`):**
   allowlist is** — the same fail-closed posture the token/approval paths
   take (requirements #29, OQ #2), applied here a fortiori because the
   calldata is opaque to the ETH limits.
-- **[design session] `contract send` must not become a policy bypass.**
+- **`contract send` must not become a policy bypass.**
   Raw calldata can encode `approve` / `transfer` / `permit` — the very
   operations `daxie token approve` wraps in the `--unlimited --yes`
   ceremony. Core must classify known ERC-20/721/1155/Permit selectors in
@@ -457,10 +456,10 @@ daxie verify --typed ./order.json --signature 0xsig... --address vitalik.eth
 ```
 
 - Signing requires the keystore passphrase like any other signing op.
-- **[design session]** Whether message signing falls under policy
-  guardrails (a signed EIP-712 order can move funds indirectly — e.g.
-  exchange orders, permits). At minimum, EIP-2612 `Permit` signatures are
-  spend-equivalents and must be policy-checked like approvals.
+- **Message signing and policy:** a signed EIP-712 order can move funds
+  indirectly (exchange orders, permits), so recognized spend-equivalent
+  signatures — EIP-2612 / DAI / Permit2 permits — are policy-checked like
+  approvals, and all other typed data is deny-by-default once a policy is active.
 
 ### `daxie ens` — ENS resolution
 

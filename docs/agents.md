@@ -46,7 +46,7 @@ DAXIE_PASSPHRASE_FILE=/run/secrets/daxie-pass daxie mcp serve
 - **Startup:** the keystore passphrase is verified against the keystore at boot
   (fail-fast, not on the first signing call) and held in an mlock'd buffer for the
   process lifetime. Decrypted HD seeds are cached after first use so each tool call
-  does not pay ~1 s of scrypt (`--no-unlock-cache` opts out). Starting with **no**
+  does not pay ~1 s of scrypt. Starting with **no**
   passphrase source is allowed — read-only tools work; signing tools return the
   structured passphrase-required error.
 - **Version handshake:** the server reports the wallet version in the MCP initialize

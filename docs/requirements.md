@@ -361,8 +361,9 @@ Model the release pipeline on the **witwave `ww` client**
 - **[DECIDED]** **Universal curl installer**: an `install.sh` published as
   a release asset, following witwave's `scripts/install.sh` pattern —
   `--version`/`--channel`/`--prefix`/`--dry-run`/`--uninstall` flags,
-  SHA256 verification by default, optional cosign signature verification,
-  sudo-less fallback to `~/.local/bin`.
+  SHA256 verification by default plus automatic cosign signature
+  verification when `cosign` is present (`--verify-signature` makes it
+  mandatory), sudo-less fallback to `~/.local/bin`.
 - **[DECIDED]** **OCI image** published per release (GHCR), multi-arch
   (amd64/arm64), minimal base (distroless/scratch — the static binary
   allows it), tagged + `latest`, cosign-signed like the binaries. This is

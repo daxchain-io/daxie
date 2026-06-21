@@ -1298,7 +1298,7 @@ append one). Permission checks use the one unified `fsx.CheckPerms` rule (§7.9)
 (long-running) verifies the passphrase against the verifier **at startup** (fail fast at
 boot, not on the first signing call) and holds it in an mlock'd `secret.Bytes` for the
 process lifetime; decrypted HD seeds are cached after first use so each signing tool call
-does not pay ~1 s of scrypt (`--no-unlock-cache` opts out). Starting with **no** source
+does not pay ~1 s of scrypt. Starting with **no** source
 is allowed: read-only tools work; signing tools return the structured
 passphrase-required error. A concurrent `keystore change-passphrase` invalidates the
 cache mid-flight with a distinct **passphrase-stale** error (§3.8).
@@ -3901,7 +3901,8 @@ no Ingress.
 
 **T7 — Supply-chain attack on the binary.** cosign-signed binaries + SHA256 checksums on
 every release; cosign-signed multi-arch OCI images; `install.sh` verifies SHA256 by
-default + optional cosign; the Homebrew cask pins URL + sha256 (tap compromise detectable
+default and auto-verifies the cosign signature when `cosign` is present (mandatory with
+`--verify-signature`); the Homebrew cask pins URL + sha256 (tap compromise detectable
 by mismatch — R9 for users who don't verify); `go.sum` pinning + minimal pure-Go dep tree;
 CI runs `govulncheck` + `go mod verify`; goreleaser emits SBOM + SLSA provenance;
 reproducible-build posture (`-trimpath`, pinned toolchain, ldflags version); distroless
@@ -4068,8 +4069,9 @@ What gets signed: **`checksums.txt`** (blob signing — transitively covers ever
 load-bearing stanza without which the one script every `curl|sh` user executes would be the
 only unsigned asset); **image manifests** (top-level `docker_signs:` by digest); and **SLSA
 provenance** (a separate signed in-toto predicate over the archive hashes). Trade-offs
-accepted: verifiers need cosign + network access (SHA256 checksums remain the default
-verification layer; cosign is the opt-in stronger layer); GitHub OIDC + Sigstore trust.
+accepted: verifiers need cosign + network access (SHA256 checksums are always verified;
+the installer also runs the cosign signature check automatically when cosign is on PATH,
+and `--verify-signature` makes it mandatory); GitHub OIDC + Sigstore trust.
 
 ### 9.4 `.goreleaser.yml` (key stanzas)
 

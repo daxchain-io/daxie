@@ -133,9 +133,12 @@ What is signed:
 - **The OCI image manifests** — signed by digest (`cosign verify` below).
 - **SLSA provenance** — a separate signed in-toto predicate over the archive hashes.
 
-`install.sh --verify-signature` runs step 2 above for you (it requires `cosign` on
-`PATH`). SHA256 checksum verification is the **default** layer and needs no extra
-tooling; cosign is the **opt-in stronger** layer.
+`install.sh` runs SHA256 checksum verification by default (no extra tooling needed)
+and **additionally runs step 2 above automatically whenever `cosign` is on `PATH`**,
+falling back to checksum-only (with a warning) when cosign is absent. Pass
+`--verify-signature` to make the signature check **mandatory** — it then fails if
+`cosign` is missing or the bundle cannot be fetched. A present-but-invalid signature
+is always a hard failure.
 
 ---
 
@@ -226,8 +229,8 @@ bare `DAXIE_*`, which is reserved for the wallet's own runtime config).
 | `--prefix <dir>` | — | Install root; binary goes to `<prefix>/bin`. Default `/usr/local`, else `~/.local`. |
 | `--install-dir <dir>` | `DAXIE_INSTALL_DIR` | Set the bin dir directly (overrides `--prefix`). |
 | `--use-sudo` | `DAXIE_INSTALL_USE_SUDO=1` | Permit sudo for a non-writable system prefix. Default: skip sudo, fall back to `~/.local/bin`. |
-| `--no-verify` | `DAXIE_INSTALL_NO_VERIFY=1` | Skip SHA256 verification. **Not recommended** (defeats supply-chain integrity). |
-| `--verify-signature` | `DAXIE_INSTALL_VERIFY_SIGNATURE=1` | Additionally cosign-verify `checksums.txt` (requires `cosign` on PATH). |
+| `--no-verify` | `DAXIE_INSTALL_NO_VERIFY=1` | Skip **all** verification (checksum and signature). **Not recommended** (defeats supply-chain integrity). |
+| `--verify-signature` | `DAXIE_INSTALL_VERIFY_SIGNATURE=1` | **Require** the cosign signature check (fail if `cosign` is absent). The default already verifies automatically when cosign is on PATH. |
 | `--dry-run` | `DAXIE_INSTALL_DRY_RUN=1` | Print the actions; change nothing. |
 | `--quiet`, `-q` | `DAXIE_INSTALL_QUIET=1` | Suppress progress (errors still go to stderr). |
 | `--force` | `DAXIE_INSTALL_FORCE=1` | Reinstall the same version (default: no-op when already current). |

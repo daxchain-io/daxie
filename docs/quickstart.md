@@ -72,7 +72,7 @@ daxie rpc add sepolia-alchemy --network sepolia \
   --url 'https://eth-sepolia.g.alchemy.com/v2/${env:ALCHEMY_API_KEY}'
 ```
 
-Get test ETH from a Sepolia faucet (see the faucet links in the docs index) before
+Get test ETH from a current Sepolia faucet before
 sending.
 
 ---
