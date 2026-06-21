@@ -2,6 +2,9 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime/debug"
 	"sort"
 
 	"github.com/daxchain-io/daxie/internal/domain"
@@ -28,8 +31,33 @@ func New(svc *service.Service) *mcp.Server {
 		Title:   "Daxie — the Ethereum wallet for AI",
 		Version: version.Get().Version,
 	}, nil)
+	// A panic in any service method reached through a tool would otherwise
+	// propagate up the SDK's per-request goroutine — which has no recover() — and
+	// crash the WHOLE `mcp serve` process, killing every in-flight session, not
+	// just the offending call. This receiving middleware sits above the typed tool
+	// dispatch and converts a panic into a per-call internal error so the long-
+	// lived server survives a single bad input.
+	srv.AddReceivingMiddleware(recoverMiddleware)
 	tools.Register(srv, svc)
 	return srv
+}
+
+// recoverMiddleware wraps every inbound request so a panic in a handler becomes a
+// CodeInternal error for that one call instead of taking down the process. The
+// panic value and stack go to stderr (the operator's channel — stdout carries the
+// stdio protocol) for diagnosis; the client receives only a generic message so a
+// panic string can never leak state to the agent.
+func recoverMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (result mcp.Result, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "daxie mcp: recovered panic in %q: %v\n%s\n", method, r, debug.Stack())
+				result = nil
+				err = domain.Newf(domain.CodeInternal, "internal error handling %q", method)
+			}
+		}()
+		return next(ctx, method, req)
+	}
 }
 
 // ServeStdio is the v1 wiring (design §6.8): one line, no per-connection state. It

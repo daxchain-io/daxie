@@ -152,7 +152,7 @@ func (s *Service) waitOnHash(ctx context.Context, p domain.Principal, cc chain.C
 		timeout = s.cfg.Tx.WaitTimeout
 	}
 	deadline := s.clock().Add(timeout)
-	poll := s.cfg.Tx.PollInterval
+	poll := floorPoll(s.cfg.Tx.PollInterval)
 
 	chainU := chainID.Uint64()
 	lastConf := uint64(0)
@@ -429,11 +429,21 @@ func (s *Service) rebroadcast(ctx context.Context, cc chain.Client, rec *journal
 		if perr != nil {
 			return false, perr
 		}
-		if berr := s.doRebroadcast(ctx, cc, rec); berr != nil {
+		// Bind the record to the FRESH reservation id in the same SetState that
+		// records the broadcast — without this the record keeps pointing at the
+		// original (now-released) reservation, so reconcile would ReleaseOrphan a
+		// spend that reached the chain (a fail-open on the 24h counter) or trip a
+		// false reservation_missing integrity error on a later rebroadcast.
+		if berr := s.doRebroadcast(ctx, cc, rec, reservation.ID); berr != nil {
 			_ = s.policy.Release(ctx, reservation.ID)
 			return false, berr
 		}
-		_ = s.policy.Commit(ctx, reservation.ID, common.HexToHash(rec.TxHash))
+		// Surface a Commit failure (mirroring the broadcast branch below). The
+		// record now references this reservation in state `reserved`, so the next
+		// Open's reconcile resolves it via CommitOrphan — the spend is never lost.
+		if cerr := s.policy.Commit(ctx, reservation.ID, common.HexToHash(rec.TxHash)); cerr != nil {
+			return false, cerr
+		}
 		return true, nil
 
 	case journal.StatusBroadcast, journal.StatusPending, journal.StatusMined, journal.StatusDropped:
@@ -455,7 +465,8 @@ func (s *Service) rebroadcast(ctx context.Context, cc chain.Client, rec *journal
 				return false, cerr
 			}
 		}
-		if berr := s.doRebroadcast(ctx, cc, rec); berr != nil {
+		// Rides the existing committed reservation — its id is unchanged ("").
+		if berr := s.doRebroadcast(ctx, cc, rec, ""); berr != nil {
 			return false, berr
 		}
 		return true, nil
@@ -467,8 +478,11 @@ func (s *Service) rebroadcast(ctx context.Context, cc chain.Client, rec *journal
 }
 
 // doRebroadcast submits the stored raw_tx and flips the record to `broadcast` on
-// success (tolerating `already known`).
-func (s *Service) doRebroadcast(ctx context.Context, cc chain.Client, rec *journal.Record) error {
+// success (tolerating `already known`). When newReservationID is non-empty it is
+// written into the record in the same transition (the signed-path re-reservation
+// rebinds the record to its fresh reservation); an empty string leaves the
+// record's reservation id unchanged (the already-committed path rides its own).
+func (s *Service) doRebroadcast(ctx context.Context, cc chain.Client, rec *journal.Record, newReservationID string) error {
 	raw, derr := decodeHex(rec.RawTx)
 	if derr != nil {
 		return domain.Wrap(domain.CodeStateCorrupt, "journal raw_tx is not valid hex", derr)
@@ -479,7 +493,11 @@ func (s *Service) doRebroadcast(ctx context.Context, cc chain.Client, rec *journ
 		}
 		// already-known ⇒ the mempool has it; treat as success.
 	}
-	return s.journal.SetState(ctx, rec.ChainID, rec.ID, journal.StateMutation{Status: journal.StatusBroadcast})
+	mut := journal.StateMutation{Status: journal.StatusBroadcast}
+	if newReservationID != "" {
+		mut.ReservationID = &newReservationID
+	}
+	return s.journal.SetState(ctx, rec.ChainID, rec.ID, mut)
 }
 
 // ── result/record projection helpers ─────────────────────────────────────────

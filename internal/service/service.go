@@ -343,6 +343,23 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	return s, nil
 }
 
+// minPollInterval floors any poll cadence at use time. A non-positive interval —
+// from a hand-edited config.toml or a DAXIE_* env that bypassed the `config set`
+// bounds check — would make the ctx-aware sleeper return immediately (it treats
+// d<=0 as a yield), turning a poll loop into a busy-spin that pegs CPU and hammers
+// the RPC. floorPoll bumps a too-small value to this safe minimum (100ms is below
+// any legitimate chain-poll need; mainnet polls at 4s, fast L2s in the sub-second
+// range). A deliberately larger interval passes through unchanged.
+const minPollInterval = 100 * time.Millisecond
+
+// floorPoll clamps a configured poll interval to minPollInterval.
+func floorPoll(d time.Duration) time.Duration {
+	if d < minPollInterval {
+		return minPollInterval
+	}
+	return d
+}
+
 // noDelaySleep is the determinism-safe Sleep fallback: it honors ctx
 // cancellation but otherwise returns immediately (no wall-clock dependency).
 func noDelaySleep(ctx context.Context, _ time.Duration) error {

@@ -219,7 +219,7 @@ type receiveState struct {
 // receiveLoop is the §5.8 detection loop: scan new blocks → detect → confirm/reorg
 // → check completion → heartbeat → timeout. It blocks via s.sleep(ctx, pollInterval).
 func (s *Service) receiveLoop(ctx context.Context, cc chain.Client, sink domain.EventSink, st *receiveState, deadline *time.Time) (domain.ReceiveResult, error) {
-	poll := s.cfg.Receive.PollInterval
+	poll := floorPoll(s.cfg.Receive.PollInterval)
 	for {
 		head, err := cc.BlockNumber(ctx)
 		if err != nil {

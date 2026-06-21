@@ -109,6 +109,50 @@ func TestResurrect_TxStatus_RebroadcastsSignedRecord(t *testing.T) {
 	}
 }
 
+// TestResurrect_SignedRebroadcast_RebindsReservation pins the §5.3 fix: when a
+// stranded `signed` record is resurrected, the fresh reservation created for the
+// rebroadcast is written BACK into the record. Without it the record keeps pointing
+// at the superseded reservation, so the next Open's reconcile — which resolves
+// orphans by reservation id — either ReleaseOrphans a spend that reached the chain
+// (fail-open on the 24h counter) or double-commits the stale one.
+func TestResurrect_SignedRebroadcast_RebindsReservation(t *testing.T) {
+	from, to := someAddr(36), someAddr(37)
+	svc, raw, _ := strandService(t, from)
+	rec := strandSigned(t, svc, raw, from, to)
+
+	orig := rec.ReservationID
+	if orig == "" {
+		t.Fatal("precondition: a stranded signed record should carry its original reservation id")
+	}
+
+	raw.failBroadcast.Store(false)
+	if _, err := svc.TxStatus(context.Background(), domain.LocalCLI(),
+		domain.TxStatusRequest{Hash: rec.TxHash}, nil); err != nil {
+		t.Fatalf("TxStatus: %v", err)
+	}
+
+	rec2, err := svc.journal.ByID(context.Background(), 1, rec.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if rec2.Status != journal.StatusBroadcast {
+		t.Fatalf("record status = %q, want broadcast", rec2.Status)
+	}
+	if rec2.ReservationID == "" {
+		t.Fatal("record lost its reservation id on rebroadcast")
+	}
+	if rec2.ReservationID == orig {
+		t.Errorf("record still points at the original reservation %q; want the fresh one bound", orig)
+	}
+	// The bound reservation id must resolve back to this record, so reconcile
+	// commits (not releases) it on the next Open.
+	got, err := svc.journal.ByReservation(context.Background(), 1, rec2.ReservationID)
+	if err != nil || got == nil || got.ID != rec.ID {
+		t.Errorf("ByReservation(%q) did not resolve to the record (got=%v err=%v); reconcile would mis-handle it",
+			rec2.ReservationID, got, err)
+	}
+}
+
 func TestResurrect_ListTxs_RebroadcastsSignedRecord(t *testing.T) {
 	from, to := someAddr(32), someAddr(33)
 	svc, raw, _ := strandService(t, from)

@@ -81,6 +81,59 @@ func TestSetKeyBadValue(t *testing.T) {
 	}
 }
 
+func TestSetKeyOutOfRange(t *testing.T) {
+	dir := t.TempDir()
+	withEnv(t, map[string]string{"HOME": t.TempDir(), "DAXIE_CONFIG": dir})
+	p, _ := ResolvePaths(FlagValues{Config: dir})
+
+	// Values that PARSE fine but are out of range must be rejected at set time
+	// with a usage exit — the headline being a non-positive (or sub-floor) poll
+	// interval, which would busy-loop the receive/tx-wait loops.
+	reject := []struct{ key, val string }{
+		{"receive.poll-interval", "0s"},
+		{"receive.poll-interval", "-5s"},
+		{"receive.poll-interval", "50ms"}, // below the 100ms floor
+		{"tx.poll-interval", "0s"},
+		{"tx.wait-timeout", "0s"},
+		{"tx.lock-timeout", "0s"},
+		{"receive.heartbeat-interval", "0s"},
+		{"receive.timeout", "-1s"},
+		{"gas.limit-multiplier", "0"},
+		{"gas.base-fee-multiplier", "-1"},
+		{"gas.rbf-bump-percent", "0"},
+		{"gas.drift-tolerance", "-0.1"},
+		{"gas.fee-history-blocks", "0"},
+		{"receive.max-log-range", "0"},
+		{"receive.lookback-blocks", "-1"},
+	}
+	for _, c := range reject {
+		err := SetKey(p, c.key, c.val)
+		if err == nil {
+			t.Errorf("SetKey(%q,%q) should be rejected as out of range", c.key, c.val)
+			continue
+		}
+		var de *domain.Error
+		if !asError(err, &de) || de.Exit != domain.ExitUsage {
+			t.Errorf("SetKey(%q,%q) error = %v, want usage exit", c.key, c.val, err)
+		}
+	}
+
+	// Boundary-valid values must still be accepted (including the deliberate
+	// zero-means-something cases: receive.timeout 0 = listen forever).
+	accept := []struct{ key, val string }{
+		{"receive.poll-interval", "100ms"}, // exactly the floor
+		{"receive.timeout", "0s"},          // 0 = listen forever
+		{"receive.lookback-blocks", "0"},   // 0 lookback is valid
+		{"gas.drift-tolerance", "0"},       // 0 tolerance is valid
+		{"gas.fee-history-blocks", "1"},
+	}
+	for _, c := range accept {
+		if err := SetKey(p, c.key, c.val); err != nil {
+			t.Errorf("SetKey(%q,%q) should be accepted: %v", c.key, c.val, err)
+		}
+	}
+}
+
 func TestSetKeyPolicyRejected(t *testing.T) {
 	dir := t.TempDir()
 	withEnv(t, map[string]string{"HOME": t.TempDir(), "DAXIE_CONFIG": dir})

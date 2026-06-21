@@ -38,6 +38,9 @@ func SetKey(p Paths, key, value string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkScalarBounds(key, typed); err != nil {
+		return err
+	}
 
 	// Lazily create the config dir (the only M0 config write). A read-only
 	// parent surfaces as config.read_only via the WriteAtomic mapping below; here
@@ -282,6 +285,68 @@ func coerceValue(key, value string) (any, error) {
 	default:
 		return value, nil
 	}
+}
+
+// minScalarPollInterval mirrors service's use-time poll floor (config must not
+// import service): the smallest cadence a poll loop runs at. Rejecting a sub-floor
+// value here turns the silent use-time clamp into an explicit set-time error.
+const minScalarPollInterval = 100 * time.Millisecond
+
+// checkScalarBounds enforces per-key value ranges after type coercion, so a
+// nonsensical or dangerous value is rejected at `config set` time (usage.bad_value)
+// rather than surfacing as a runtime failure. The headline case: a non-positive
+// poll interval makes the ctx-aware sleeper return immediately, busy-looping the
+// receive/tx-wait loops (pegging CPU, hammering the RPC). Type asserts use the
+// comma-ok form so a key/type mismatch is skipped, never a panic.
+func checkScalarBounds(key string, typed any) error {
+	bad := func(want string) error {
+		return domain.Newf(domain.CodeUsage+".bad_value", "%q %s", key, want)
+	}
+	switch key {
+	case "receive.poll-interval", "tx.poll-interval":
+		if d, ok := durOf(typed); ok && d < minScalarPollInterval {
+			return bad("must be at least 100ms (a smaller value would busy-poll the RPC)")
+		}
+	case "tx.wait-timeout", "tx.lock-timeout", "receive.heartbeat-interval":
+		if d, ok := durOf(typed); ok && d <= 0 {
+			return bad(`must be a positive duration (e.g. "30s")`)
+		}
+	case "receive.timeout":
+		if d, ok := durOf(typed); ok && d < 0 {
+			return bad("must be zero (listen forever) or a positive duration")
+		}
+	case "gas.limit-multiplier", "gas.base-fee-multiplier", "gas.rbf-bump-percent":
+		if f, ok := typed.(float64); ok && f <= 0 {
+			return bad("must be greater than zero")
+		}
+	case "gas.drift-tolerance":
+		if f, ok := typed.(float64); ok && f < 0 {
+			return bad("must not be negative")
+		}
+	case "gas.fee-history-blocks", "receive.max-log-range":
+		if n, ok := typed.(int64); ok && n < 1 {
+			return bad("must be at least 1")
+		}
+	case "receive.lookback-blocks":
+		if n, ok := typed.(int64); ok && n < 0 {
+			return bad("must not be negative")
+		}
+	}
+	return nil
+}
+
+// durOf re-parses the canonical duration string coerceValue stores for a
+// typeDuration key. Returns ok=false if typed is not such a string.
+func durOf(typed any) (time.Duration, bool) {
+	s, ok := typed.(string)
+	if !ok {
+		return 0, false
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, false
+	}
+	return d, true
 }
 
 // readOnlyErr builds the canonical config.read_only error naming the file and the

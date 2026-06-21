@@ -217,12 +217,13 @@ func (s *Store) SetState(ctx context.Context, chainID uint64, id string, mut Sta
 // Status is always required (the zero "" Status would be invalid; callers pass the
 // target status explicitly).
 type StateMutation struct {
-	Status     Status
-	TxHash     *string
-	Receipt    *Receipt
-	ReplacedBy *string
-	Replaces   *string
-	Error      *string
+	Status        Status
+	TxHash        *string
+	Receipt       *Receipt
+	ReplacedBy    *string
+	Replaces      *string
+	Error         *string
+	ReservationID *string
 }
 
 // applyTo mutates dst with the non-nil fields of m. Status is always applied (a
@@ -247,6 +248,9 @@ func (m StateMutation) applyTo(dst *Record) {
 	}
 	if m.Error != nil {
 		dst.Error = m.Error
+	}
+	if m.ReservationID != nil {
+		dst.ReservationID = *m.ReservationID
 	}
 }
 
