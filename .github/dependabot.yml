@@ -1,0 +1,34 @@
+# Dependabot keeps the two pinned dependency surfaces fresh: Go modules (go.mod)
+# and the SHA-pinned GitHub Actions. The action SHAs are a deliberate supply-chain
+# control (see ci.yml / release.yml) and rot without an auto-bump mechanism — this
+# file is that mechanism. (Tool versions installed via `go install ...@vX` in run
+# steps are NOT covered by dependabot and are bumped manually.)
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      # Batch routine minor/patch bumps into one PR to cut review churn; majors
+      # and security updates still arrive as isolated PRs.
+      go-modules:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      github-actions:
+        update-types:
+          - "minor"
+          - "patch"

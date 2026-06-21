@@ -59,6 +59,9 @@ jobs:
           go-version: "1.26"
           check-latest: true
       - name: actionlint
+        # Pinned (not @latest) for reproducible, supply-chain-safe CI: a compromised
+        # upstream release can't run here unbidden. Bump manually — a `go install`
+        # version in a run step is not tracked by dependabot.
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
