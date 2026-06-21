@@ -367,6 +367,16 @@ func (s *Service) ContractLogs(ctx context.Context, _ domain.Principal, req doma
 	if err != nil {
 		return domain.ContractLogsResult{}, err
 	}
+	// Cap the TOTAL span so one tool call can't fan out into tens of thousands of
+	// eth_getLogs round-trips (e.g. a from_block:0..head query) — a DoS against the
+	// operator's RPC reachable from the narrowed agent surface. The chunk splitter
+	// (maxLogRange) bounds each request; this bounds their count. The caller pages
+	// through a wider history with explicit ranges.
+	if toBlk-fromBlk+1 > maxLogSpan {
+		return domain.ContractLogsResult{}, domain.Newf(domain.CodeUsage+".log_range_too_wide",
+			"block span %d exceeds the %d-block limit for one query; narrow --from-block/--to-block (or page through the range)",
+			toBlk-fromBlk+1, maxLogSpan)
+	}
 
 	to := dest.Address
 	var logs []domain.DecodedLog
@@ -697,6 +707,12 @@ func (s *Service) resolveLogRange(ctx context.Context, cc chain.Client, fromStr,
 	}
 	return from, to, nil
 }
+
+// maxLogSpan caps the total block range a single `contract logs` query may cover.
+// At the default 1000-block chunk this bounds one call to ~100 eth_getLogs requests,
+// killing the from_block:0..head fan-out while still allowing a generous window
+// (~2 weeks on mainnet; callers page for more).
+const maxLogSpan uint64 = 100_000
 
 // maxLogRange returns the §5.8 receive.max-log-range block-chunk span (default 1000).
 // It reuses the existing receive config key — no new config key for contract logs.

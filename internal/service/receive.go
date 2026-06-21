@@ -218,34 +218,25 @@ type receiveState struct {
 
 // receiveLoop is the §5.8 detection loop: scan new blocks → detect → confirm/reorg
 // → check completion → heartbeat → timeout. It blocks via s.sleep(ctx, pollInterval).
+//
+// A transient RPC failure (rpc.unreachable) does NOT end the listen: the loop is
+// meant to outlast a flaky endpoint, so it emits a heartbeat and retries on the next
+// poll, with lastScanned preserving progress (a re-scan is idempotent — detections
+// dedup by key). A bounded listen still ends at its deadline; a non-transport error
+// (e.g. state corruption) still terminates immediately.
 func (s *Service) receiveLoop(ctx context.Context, cc chain.Client, sink domain.EventSink, st *receiveState, deadline *time.Time) (domain.ReceiveResult, error) {
 	poll := floorPoll(s.cfg.Receive.PollInterval)
 	for {
-		head, err := cc.BlockNumber(ctx)
-		if err != nil {
-			return domain.ReceiveResult{}, mapRPCErr(err)
+		res, done, err := s.receiveStep(ctx, cc, sink, st)
+		switch {
+		case done:
+			return res, nil
+		case err != nil && !isRetryableRPC(err):
+			return domain.ReceiveResult{}, err
+		case err != nil:
+			// Transient transport blip mid-listen: keep waiting, signal liveness.
+			s.maybeHeartbeat(sink, st)
 		}
-
-		// ── scan every new block (lastScanned+1 .. head) ──
-		if head > st.lastScanned {
-			if derr := s.scanRange(ctx, cc, sink, st, st.lastScanned+1, head); derr != nil {
-				return domain.ReceiveResult{}, derr
-			}
-			st.lastScanned = head
-		}
-
-		// ── confirmation / reorg re-verify over the pending + confirmed sets ──
-		if cerr := s.advanceConfirmations(ctx, cc, sink, st, head); cerr != nil {
-			return domain.ReceiveResult{}, cerr
-		}
-
-		// ── completion? ──
-		if s.completed(st) {
-			return s.completeResult(sink, st), nil
-		}
-
-		// ── heartbeat in quiet periods ──
-		s.maybeHeartbeat(sink, st)
 
 		// ── timeout? ──
 		if deadline != nil && !s.Now().Before(*deadline) {
@@ -259,6 +250,46 @@ func (s *Service) receiveLoop(ctx context.Context, cc chain.Client, sink domain.
 			return s.timeoutResult(sink, st), nil
 		}
 	}
+}
+
+// receiveStep runs one detect→confirm→complete pass. It returns done=true with the
+// final result when the listen should end (completion), otherwise an error the
+// caller classifies as retryable (transient transport → keep listening) or fatal.
+// On a quiet successful pass it emits the heartbeat.
+func (s *Service) receiveStep(ctx context.Context, cc chain.Client, sink domain.EventSink, st *receiveState) (domain.ReceiveResult, bool, error) {
+	head, err := cc.BlockNumber(ctx)
+	if err != nil {
+		return domain.ReceiveResult{}, false, mapRPCErr(err)
+	}
+
+	// ── scan every new block (lastScanned+1 .. head) ──
+	if head > st.lastScanned {
+		if derr := s.scanRange(ctx, cc, sink, st, st.lastScanned+1, head); derr != nil {
+			return domain.ReceiveResult{}, false, derr
+		}
+		st.lastScanned = head
+	}
+
+	// ── confirmation / reorg re-verify over the pending + confirmed sets ──
+	if cerr := s.advanceConfirmations(ctx, cc, sink, st, head); cerr != nil {
+		return domain.ReceiveResult{}, false, cerr
+	}
+
+	// ── completion? ──
+	if s.completed(st) {
+		return s.completeResult(sink, st), true, nil
+	}
+
+	// ── heartbeat in quiet periods ──
+	s.maybeHeartbeat(sink, st)
+	return domain.ReceiveResult{}, false, nil
+}
+
+// isRetryableRPC reports whether err is a transient transport failure
+// (rpc.unreachable) — the class a long-running listen retries rather than aborts on.
+// Chain-id mismatch and every non-transport error are NOT retryable.
+func isRetryableRPC(err error) bool {
+	return domain.AsError(err).Code == domain.CodeRPCUnreachable
 }
 
 // scanRange scans blocks [from,to] for inbound detections of the listening asset,
