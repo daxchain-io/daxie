@@ -1,6 +1,6 @@
 // Package archtest enforces the one-core/two-frontends import matrix (design §2.2,
 // §2.3c) as a REAL Go test, not a comment or a linter config. The depguard rules in
-// .golangci.yml and the lattice in .go-arch-lint.yml are belt-and-suspenders; this
+// .golangci.yml are a fast lint-time belt; this
 // test is the load-bearing gate: it goes red the moment the dependency law is broken,
 // even with every linter uninstalled.
 //
@@ -271,7 +271,7 @@ func checkEdge(t *testing.T, fromPath string, from layer, imp string) {
 // with ZERO import-matrix enforcement, as both a source AND a target of edges. This
 // test makes that a HARD failure: every package under internalPrefix MUST classify to a
 // governed layer. Whoever adds internal/foo is forced to register it in
-// providerNames/frontendRoots (and the depguard + go-arch-lint lattices) or this test
+// providerNames/frontendRoots (and the depguard lattice in .golangci.yml) or this test
 // goes red — restoring the stated guarantee that "a future add cannot land on the wrong
 // side of the matrix silently."
 func TestNoUnclassifiedInternalPackages(t *testing.T) {
@@ -282,7 +282,7 @@ func TestNoUnclassifiedInternalPackages(t *testing.T) {
 			continue
 		}
 		if classify(p.ImportPath) == layerExternal {
-			t.Errorf("UNCLASSIFIED INTERNAL PACKAGE: %s classifies to layerExternal and is therefore ungoverned by the import matrix; register it in providerNames or frontendRoots (and the depguard + go-arch-lint lattices) so it lands on the correct side of the matrix", p.ImportPath)
+			t.Errorf("UNCLASSIFIED INTERNAL PACKAGE: %s classifies to layerExternal and is therefore ungoverned by the import matrix; register it in providerNames or frontendRoots (and the depguard lattice in .golangci.yml) so it lands on the correct side of the matrix", p.ImportPath)
 		}
 	}
 }

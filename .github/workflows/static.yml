@@ -7,7 +7,7 @@
 #   markdownlint - npx markdownlint-cli2 (Node is pre-installed on the runner;
 #                  rules live in .markdownlint-cli2.jsonc)
 #   shellcheck   - pre-installed on ubuntu-latest
-#   actionlint   - `go install` (mirrors ci.yml's go-arch-lint/govulncheck),
+#   actionlint   - `go install` (mirrors ci.yml's govulncheck),
 #                  so no third-party action SHA to track
 # Only first-party actions (checkout, setup-go) are used; their SHAs match
 # ci.yml exactly (dependabot bumps them in one place to compare against).

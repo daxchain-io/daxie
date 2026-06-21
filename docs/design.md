@@ -319,12 +319,15 @@ API is a shippable library boundary the day the daemon lands.
 
 ### 2.3 Enforcement is CI, not convention
 
-Three independent gates:
+A documented lattice, enforced by two CI gates:
 
-**(a) `go-arch-lint` components/deps lattice** documents intent:
+**(a) The components/deps lattice** states the intent — the canonical statement of
+the import rules, enforced by (b) and (c) below. (`go-arch-lint` once checked this
+lattice directly, but it duplicated (c) and its `@latest` schema drifted, so it was
+retired from CI; the lattice is kept here as the law it expresses.)
 
 ```yaml
-# .go-arch-lint.yml
+# architecture lattice (intent) — enforced by depguard (b) + arch_test.go (c):
 components:
   frontends: { in: internal/{cli,mcpserver}/... }
   core:      { in: internal/service/... }
@@ -337,8 +340,9 @@ deps:
   providers: { mayNotDependOn: [core, frontends] }         # leaves only
 ```
 
-**(b) `depguard` in `.golangci.yml`** is the precise deny-list (belt to
-go-arch-lint's suspenders): the frontend rule denies every provider import; the
+**(b) `depguard` in `.golangci.yml`** is the precise deny-list (a fast lint-time
+belt to the authoritative matrix in (c)): the frontend rule denies every provider
+import; the
 `contract` rule denies all `internal/*` and geth behavioral packages; the providers
 rule denies `service`/`cli`/`mcpserver` and `github.com/spf13/viper` (allow-listed
 only in `config`).
