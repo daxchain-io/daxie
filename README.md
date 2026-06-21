@@ -11,9 +11,9 @@ one-core/two-frontends architecture so the CLI and the MCP server traverse the
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8.svg)](https://go.dev/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Status: v1.0 release-candidate phase.** The CLI surface, JSON schemas, exit
-> codes, MCP tool set, config schema, and on-disk state formats are frozen for
-> v1.0 (semver-protected; see [Versioning](#versioning)). Custody in v1 is an
+> **Status: v1.0 — stable.** The CLI surface, JSON schemas, exit codes, MCP tool
+> set, config schema, and on-disk state formats are frozen and semver-protected
+> (see [Versioning](#versioning)). Custody in v1 is an
 > **encrypted local keystore inside one OS trust domain** (same uid as the agent).
 > That boundary is stated honestly — see [Security model](#security-model) and
 > the v2 signer-daemon path. Use a testnet and a small mainnet float while you
@@ -50,14 +50,10 @@ branch on.
 Four supported paths. **Verify before you run** (see [docs/install.md](docs/install.md)
 for the download-verify-run recipe and cosign signature verification).
 
-> **During the release-candidate phase,** the *floating* install channels resolve
-> to **stable releases only** — they will not see a release candidate. That covers
-> Homebrew, the `curl | sh` `/releases/latest` URL, the `:latest` and `:1.0`
-> Docker tags, and `go install` with `@latest`. Until stable `v1.0.0` ships, pin
-> an exact published prerelease: release assets for `v1.0.0-rc.N`, the
-> `ghcr.io/daxchain-io/images/daxie:1.0.0-rc.N` image, or `@v1.0.0-rc.N` for
-> `go install`. The commands below document stable-channel forms unless they show
-> an explicit version variable.
+> The *floating* install channels — Homebrew, the `curl | sh` `/releases/latest`
+> URL, the `:latest` and `:1.0` Docker tags, and `go install` with `@latest` —
+> track the **stable** channel: they resolve to the latest stable release and a
+> prerelease never moves them. Pin an exact version or image digest in production.
 
 ### Homebrew (macOS / Linux)
 
@@ -88,7 +84,7 @@ to `~/.local/bin` (no sudo). Flags and `DAXIE_INSTALL_*` env vars are documented
 ### Container image (GHCR)
 
 ```sh
-VERSION=1.0.0-rc.N # use 1.0.0 after stable promotion
+VERSION=1.0.0
 docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
 docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
 ```

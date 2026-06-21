@@ -15,8 +15,11 @@ first beta — agents could integrate early.
 
 ## [Unreleased]
 
-Post-`rc.1` hardening, robustness, and documentation. All changes are additive or
-hardening within the frozen v1.0 contract — none breaks a documented behavior.
+## [1.0.0] — 2026-06-21
+
+First stable release. Promotes `v1.0.0-rc.1` with the post-`rc.1` hardening,
+robustness, and documentation below. All changes are additive or hardening within
+the frozen v1.0 contract — none breaks a documented behavior.
 
 ### Added
 
@@ -214,7 +217,8 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   `internal/version`, and the `version`/`completion`/`config`/`convert` commands; the
   goreleaser snapshot build and the CI matrix from day one.
 
-[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.0.0-rc.1...HEAD
+[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/daxchain-io/daxie/compare/v0.11.0...v1.0.0-rc.1
 [0.11.0]: https://github.com/daxchain-io/daxie/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/daxchain-io/daxie/compare/v0.9.0...v0.10.0

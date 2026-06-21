@@ -10,11 +10,10 @@ This guide covers every install path and, importantly, **how to verify what you
 install**. The supply-chain controls only protect you if you use them: residual R9
 (in [security.md](security.md)) is exactly "users who skip verification".
 
-During the release-candidate phase, floating channels resolve to stable releases
-only: Homebrew, `/releases/latest`, Docker `:latest` / `:X.Y`, and
-`go install ...@latest` do not move to prereleases. Until stable `v1.0.0` ships,
-use exact published prerelease tags instead: `v1.0.0-rc.N` for release
-assets/install.sh/go install and `1.0.0-rc.N` for the GHCR image tag.
+Floating channels track the **stable** channel: Homebrew, `/releases/latest`,
+Docker `:latest` / `:X.Y`, and `go install ...@latest` resolve to the latest stable
+release and never move to a prerelease (`-beta.N` / `-rc.N`). Pin an exact version or
+image digest in production.
 
 - [Homebrew (cask)](#homebrew-cask)
 - [curl one-liner](#curl-one-liner)
@@ -145,7 +144,7 @@ is always a hard failure.
 ## Container image (GHCR)
 
 ```sh
-VERSION=1.0.0-rc.N # use 1.0.0 after stable promotion
+VERSION=1.0.0
 docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
 docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
 ```
