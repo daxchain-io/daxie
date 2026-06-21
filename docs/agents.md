@@ -51,6 +51,12 @@ DAXIE_PASSPHRASE_FILE=/run/secrets/daxie-pass daxie mcp serve
   structured passphrase-required error.
 - **Version handshake:** the server reports the wallet version in the MCP initialize
   response, so an agent can assert what it is talking to without shelling out.
+- **Audit + isolation:** `mcp serve` writes one structured audit line per inbound tool
+  call to **stderr** (method, tool, outcome) — the operator's off-chain trail for
+  `sign_message` / `sign_typed_data` and policy denials, which otherwise leave no record
+  beyond the on-chain tx journal (stdout carries only the JSON-RPC protocol, so capture
+  stderr to retain it). A panic in any tool handler is contained to that one call
+  (returned as an internal error), never crashing the server or leaking state to the agent.
 
 Inspect the surface without a client:
 

@@ -263,6 +263,10 @@ daxie receive ... --qr                               # also render the receiving
   the threshold is the reorg protection that makes "received" trustworthy.
 - Exit codes mirror `tx wait`: confirmed, vs. timed-out-still-listening
   (not a failure — re-run to resume listening; detection is stateless).
+- **Resilience:** a transient RPC failure (`rpc.unreachable`) mid-listen does
+  **not** end the listen — the loop retries on the next poll, so an unbounded
+  wait outlasts a flaky endpoint. A bounded listen still ends at its `--timeout`;
+  a non-transport error still terminates.
 - **Detection mechanics:** token/NFT
   arrivals via `Transfer` event log filters; plain ETH arrivals have no
   logs, so detection is balance/block polling — and WebSocket RPC
@@ -390,12 +394,19 @@ daxie contract send staking getReward --from bot/0 \
 daxie contract logs staking Staked --from-block 19000000
 daxie contract logs staking Staked --arg user=bot/0 --from-block 19000000   # filter indexed arg (ref resolved)
 daxie contract logs 0x7a25...AbCd --sig "Staked(address indexed,uint256)" --from-block 19000000
+daxie contract logs staking Staked --from-block 19000000 --to-block 19100000   # bounded range (span ≤ 100k blocks)
 
 # --- calldata utilities (no chain, no signing) — for relayers / meta-tx / debugging ---
 daxie contract encode airdrop claim 42 0xUser... 500000000000000000000 '[0xabc...,0xdef...]'  # bytes32[] proof
 daxie contract encode staking stake 1000000000000000000                                       # → 0x… calldata
 daxie contract decode --sig "stake(uint256)" 0x<calldata>                                     # calldata → values
 ```
+
+**`contract logs` range:** `--from-block` / `--to-block` bound the query
+(`--to-block` defaults to the chain head). The total span is capped at **100,000
+blocks**; a wider range returns `usage.log_range_too_wide` (exit 2) — page through
+history with successive windows. Each request is chunked by `receive.max-log-range`
+(1000-block default).
 
 **ABI source, in precedence:** (1) a registered alias's stored ABI; (2)
 `--abi` / `--abi-stdin` JSON; (3) an inline `--sig` human-readable

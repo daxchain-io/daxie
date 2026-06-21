@@ -69,6 +69,18 @@ timeout = "30s"
 Keys are kebab-case; the env replacer maps both `.` and `-` to `_`, so
 `gas.limit-multiplier` ⇒ `DAXIE_GAS_LIMIT_MULTIPLIER`.
 
+**Value bounds (checked at `config set`).** Out-of-range tuning values are rejected
+with `usage.bad_value` at set time rather than failing at runtime: poll intervals
+(`receive.poll-interval`, `tx.poll-interval`) must be **≥ 100ms**; durations
+(`tx.wait-timeout`, `tx.lock-timeout`, `receive.heartbeat-interval`) must be
+**positive**; `receive.timeout` must be **≥ 0** (`0` = listen forever); gas
+multipliers (`gas.limit-multiplier`, `gas.base-fee-multiplier`, `gas.rbf-bump-percent`)
+must be **> 0** and `gas.drift-tolerance` **≥ 0**; counts (`gas.fee-history-blocks`,
+`receive.max-log-range`) must be **≥ 1** and `receive.lookback-blocks` **≥ 0**. A value
+that reaches the binary through a `DAXIE_*` env var or a hand-edited `config.toml`
+(bypassing this check) is additionally floored at use time — poll intervals to 100ms —
+so a bad value can never busy-spin the poll loops.
+
 ---
 
 ## Environment variables

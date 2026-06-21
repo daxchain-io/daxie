@@ -15,6 +15,56 @@ first beta — agents could integrate early.
 
 ## [Unreleased]
 
+Post-`rc.1` hardening, robustness, and documentation. All changes are additive or
+hardening within the frozen v1.0 contract — none breaks a documented behavior.
+
+### Added
+
+- **`config set` value validation:** out-of-range tuning values are rejected at set
+  time with `usage.bad_value` (poll intervals < 100ms, non-positive timeouts/gas
+  multipliers, counts < 1) instead of surfacing as a runtime failure.
+- **`contract logs` total-span cap:** a single query is capped at 100,000 blocks,
+  bounding the `eth_getLogs` fan-out from an agent-reachable `--from-block 0..head`
+  query. New error code `usage.log_range_too_wide` (exit 2); page wider history with
+  explicit ranges.
+- **`mcp serve` hardening:** a panic in any tool handler is contained to that one
+  call (returned as an internal error, never crashing the server or leaking state),
+  and a per-call structured audit line is written to stderr (method, tool, outcome).
+- **CI / supply-chain:** `.github/dependabot.yml` (weekly grouped Go-module bumps +
+  SHA-pinned GitHub Actions); `govulncheck`/`actionlint` pinned to explicit versions.
+
+### Changed
+
+- **`install.sh` default verification:** when `cosign` is on PATH the installer now
+  *automatically* verifies the keyless signature on `checksums.txt`, falling back to
+  checksum-only (with a warning) when cosign is absent. `--verify-signature` makes the
+  check mandatory; `--no-verify` skips all verification.
+- **`daxie receive` resilience:** a transient `rpc.unreachable` mid-listen no longer
+  aborts the listen — it retries on the next poll (progress preserved; re-scans dedup
+  by detection key). A bounded listen still ends at its deadline; non-transport errors
+  still terminate.
+- **Dependencies:** grouped bump of go-ethereum (1.17.0 → 1.17.3), golang.org/x/crypto
+  (0.45 → 0.47), and 8 other direct modules (patch/minor; `govulncheck` clean).
+
+### Fixed
+
+- **Spend-counter fail-open on signed-record rebroadcast:** a resurrected
+  `signed`-but-unbroadcast tx created a fresh reservation that was never written back
+  into the journal record, so restart reconciliation could release a spend that
+  reached the chain (under-counting the rolling-24h window) or trip a false integrity
+  error. The record is now rebound to its fresh reservation.
+- **`policy.Reserve` crash-safety ordering:** the durable reservation record is now
+  written *before* the counter debit, so a counter-write failure can no longer strand
+  a counted debit with no reservation to reconcile (a 24h over-count with no recovery).
+- **Config busy-loop:** a non-positive poll interval reaching the scheduler is floored
+  to 100ms at use time, preventing a CPU/RPC busy-spin from a hand-edited config.
+
+### Removed
+
+- `.go-arch-lint.yml` — the one-core/two-frontends boundary is enforced by
+  `internal/arch_test.go` (and golangci-lint depguard), making the external config
+  redundant; `docs/design.md` §2.3 updated to match.
+
 ## [1.0.0-rc.1] — 2026-06-17
 
 First release candidate. The CLI surface and the MCP tool surface are **frozen** for
