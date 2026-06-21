@@ -468,7 +468,6 @@ func (e *Engine) debitCounter(cf *counterFile, r *Reservation, c Check, now time
 	if c.IsRBFDelta {
 		if existing := cf.findEntryByNonce(c.AccountNonce); existing != nil {
 			existing.Candidates = append(existing.Candidates, cand)
-			r.entryID = existing.ID // the reservation's counter entry is the superseded one
 			return
 		}
 	}

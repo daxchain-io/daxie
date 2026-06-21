@@ -47,9 +47,8 @@ type Reservation struct {
 	Network     string `json:"network,omitempty"`      // per-network bucket key (mainnet vs an L2)
 	PolicyNonce uint64 `json:"policy_nonce,omitempty"` // §4.6 rollback tripwire generation
 
-	// ── transient (never persisted) cross-link fields ──
-	skipReserve bool   // a permit: allowed, gasless, never reserves (no record written)
-	entryID     string // the counter entry id this reservation debits (RBF: the superseded entry)
+	// ── transient (never persisted) field ──
+	skipReserve bool // a permit: allowed, gasless, never reserves (no record written)
 }
 
 // reservationsDir is the policy sub-dir holding the durable reservation log.

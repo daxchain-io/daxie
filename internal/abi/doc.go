@@ -28,7 +28,7 @@
 // Three responsibilities, three files:
 //
 //   - abi.go     — ParseJSON, ParseSig, PackCall, UnpackReturns, UnpackCalldata,
-//     PackEvent, UnpackLog, EventTopic0 (the codec).
+//     PackEvent, UnpackLog (the codec).
 //   - coerce.go  — CoerceArgs + ParseLiteral (the §2.5 "parse once" arg grammar:
 //     scalars, large-uint, bracketed array/tuple literals, nesting,
 //     double-quoted delimiter-bearing elements).

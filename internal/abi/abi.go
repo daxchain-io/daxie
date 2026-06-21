@@ -231,16 +231,6 @@ func (Codec) UnpackCalldata(parsed *gethabi.ABI, calldata []byte) (method, selec
 
 // ── events (logs) ────────────────────────────────────────────────────────────────
 
-// EventTopic0 returns keccak(eventSignature) — the canonical Topics[0] for the
-// event. An unknown event is usage.unknown_method.
-func (Codec) EventTopic0(parsed *gethabi.ABI, event string) (common.Hash, error) {
-	ev, ok := parsed.Events[event]
-	if !ok {
-		return common.Hash{}, errUnknownMethod(event)
-	}
-	return ev.ID, nil
-}
-
 // PackEvent builds the eth_getLogs Topics for `contract logs`: Topics[0] =
 // keccak(event signature); each indexed-arg filter → the positional Topics[i] word
 // (address-typed filter values are common.Address; the caller ref/ENS-resolves them
