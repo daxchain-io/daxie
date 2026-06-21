@@ -192,10 +192,11 @@ func (e *Engine) Reserve(ctx context.Context, c Check) (Reservation, error) {
 	if present {
 		// Network-lock critical section (§4.1 per-(network) day lock): read every
 		// account's counter → AGGREGATE the rolling-24h window across all accounts →
-		// Evaluate → (if allowed) debit the signing account's counter. The denial
-		// returns BEFORE any durable write (the ordering service depends on). The
-		// network lock makes the cross-account read-sum-then-reserve atomic, so two
-		// parallel sends on DIFFERENT accounts cannot jointly overshoot max_day (R2a).
+		// Evaluate → (if allowed) write the reservation record, then debit the signing
+		// account's counter. The denial returns BEFORE any durable write (the ordering
+		// service depends on). The network lock makes the cross-account
+		// read-sum-then-reserve atomic, so two parallel sends on DIFFERENT accounts
+		// cannot jointly overshoot max_day (R2a).
 		if err := e.withNetworkLock(ctx, c.Network, func() error {
 			cf, lerr := e.loadCounter(c.Network, c.Account)
 			if lerr != nil {
@@ -217,6 +218,18 @@ func (e *Engine) Reserve(ctx context.Context, c Check) (Reservation, error) {
 				r.skipReserve = true
 				return nil
 			}
+			// Write the reservation record (the orphan source of truth) BEFORE the
+			// counter debit, so a failure on the counter write can never strand a
+			// COUNTED debit with no reservation to reconcile it (a 24h over-count with
+			// no recovery path). At worst this now strands an UN-counted reservation —
+			// the window stays correct, and reconcile releases the orphan. Nesting the
+			// global lock inside the network lock is deadlock-safe: withLock takes only
+			// a flock (no in-process mutex) on a different file than the counter lock,
+			// and no path holds the global lock while acquiring the network lock
+			// (Commit/Release/SettleActual release it before touching the counter).
+			if rerr := e.writeReservation(ctx, &r); rerr != nil {
+				return rerr
+			}
 			e.debitCounter(cf, &r, c, now)
 			cf.PolicyNonce = pol.Nonce
 			return e.writeCounter(c.Network, c.Account, cf, now)
@@ -230,19 +243,29 @@ func (e *Engine) Reserve(ctx context.Context, c Check) (Reservation, error) {
 			// no-ops).
 			return Reservation{}, nil
 		}
+		return r, nil
 	}
 
-	// Durable reservation record (the orphan source of truth, M3 — global lock).
-	if werr := e.withLock(ctx, func() error {
+	// No active policy: still record the reservation (the journal cross-link / orphan
+	// source of truth, M3), with no evaluation and no counter debit.
+	if werr := e.writeReservation(ctx, &r); werr != nil {
+		return Reservation{}, werr
+	}
+	return r, nil
+}
+
+// writeReservation appends r to the durable reservation log under the global policy
+// lock (the orphan source of truth, M3). It is the single place Reserve writes the
+// log record — used both inside the network-lock critical section (active policy,
+// before the counter debit) and on the no-policy path.
+func (e *Engine) writeReservation(ctx context.Context, r *Reservation) error {
+	return e.withLock(ctx, func() error {
 		byID, order, lerr := e.loadAll()
 		if lerr != nil {
 			return lerr
 		}
-		return e.appendAndCompact(byID, order, &r)
-	}); werr != nil {
-		return Reservation{}, werr
-	}
-	return r, nil
+		return e.appendAndCompact(byID, order, r)
+	})
 }
 
 // Commit promotes a reservation to {state:"committed", hash} after a successful
