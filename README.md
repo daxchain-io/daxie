@@ -11,7 +11,7 @@ one-core/two-frontends architecture so the CLI and the MCP server traverse the
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8.svg)](https://go.dev/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Status: v1.0 — stable.** The CLI surface, JSON schemas, exit codes, MCP tool
+> **Status: v1 — stable.** The CLI surface, JSON schemas, exit codes, MCP tool
 > set, config schema, and on-disk state formats are frozen and semver-protected
 > (see [Versioning](#versioning)). Custody in v1 is an
 > **encrypted local keystore inside one OS trust domain** (same uid as the agent).
@@ -84,7 +84,7 @@ to `~/.local/bin` (no sudo). Flags and `DAXIE_INSTALL_*` env vars are documented
 ### Container image (GHCR)
 
 ```sh
-VERSION=1.0.0
+VERSION=1.1.0
 docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
 docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
 ```

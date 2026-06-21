@@ -15,11 +15,12 @@ first beta — agents could integrate early.
 
 ## [Unreleased]
 
-## [1.0.0] — 2026-06-21
+## [1.1.0] — 2026-06-21
 
-First stable release. Promotes `v1.0.0-rc.1` with the post-`rc.1` hardening,
-robustness, and documentation below. All changes are additive or hardening within
-the frozen v1.0 contract — none breaks a documented behavior.
+Adds the `daxie tx abandon` command plus post-v1.0.0 hardening, robustness, and
+documentation. All changes are backward-compatible with the frozen v1.0 contract —
+none breaks a documented behavior (the new command is additive; the rest is
+hardening).
 
 ### Added
 
@@ -73,6 +74,11 @@ the frozen v1.0 contract — none breaks a documented behavior.
 - `.go-arch-lint.yml` — the one-core/two-frontends boundary is enforced by
   `internal/arch_test.go` (and golangci-lint depguard), making the external config
   redundant; `docs/design.md` §2.3 updated to match.
+
+## [1.0.0] — 2026-06-18
+
+First stable release — promotes `v1.0.0-rc.1` unchanged (ships the M0–M11 binary;
+see that entry for the surface).
 
 ## [1.0.0-rc.1] — 2026-06-17
 
@@ -217,7 +223,8 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   `internal/version`, and the `version`/`completion`/`config`/`convert` commands; the
   goreleaser snapshot build and the CI matrix from day one.
 
-[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/daxchain-io/daxie/compare/v0.11.0...v1.0.0-rc.1
 [0.11.0]: https://github.com/daxchain-io/daxie/compare/v0.10.0...v0.11.0

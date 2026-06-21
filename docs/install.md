@@ -144,7 +144,7 @@ is always a hard failure.
 ## Container image (GHCR)
 
 ```sh
-VERSION=1.0.0
+VERSION=1.1.0
 docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
 docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
 ```
