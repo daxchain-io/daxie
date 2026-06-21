@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime/debug"
 	"sort"
@@ -60,11 +61,64 @@ func recoverMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
-// ServeStdio is the v1 wiring (design §6.8): one line, no per-connection state. It
-// blocks until the client disconnects or ctx is canceled (SIGINT/SIGTERM threaded
-// from the cli host).
+// ServeStdio is the v1 wiring (design §6.8): no per-connection state. It blocks
+// until the client disconnects or ctx is canceled (SIGINT/SIGTERM threaded from the
+// cli host). It installs the audit middleware HERE (not in New) so `mcp tools`
+// introspection stays silent — only a real serve emits the operator audit trail.
 func ServeStdio(ctx context.Context, srv *mcp.Server) error {
+	log := newAuditLogger()
+	srv.AddReceivingMiddleware(auditMiddleware(log))
+	log.Info("mcp serve started", "version", version.Get().Version, "transport", "stdio")
 	return srv.Run(ctx, &mcp.StdioTransport{})
+}
+
+// newAuditLogger writes structured audit lines to stderr — stdout is reserved for
+// the stdio JSON-RPC protocol, so logging there would corrupt it.
+func newAuditLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+}
+
+// auditMiddleware emits one structured line per inbound MCP request — the operator's
+// record of what an agent attempted over MCP, which otherwise leaves no trail beyond
+// the on-chain tx journal (off-chain sign_message / sign_typed_data and every policy
+// denial in particular). It logs the method, the tool name for a tools/call, and the
+// outcome (ok / tool_error / error+code) — never arguments or secrets. It sits
+// outside recoverMiddleware, so even a recovered panic is logged as an error.
+func auditMiddleware(log *slog.Logger) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			args := []any{"method", method}
+			if name := toolName(req); name != "" {
+				args = append(args, "tool", name)
+			}
+			switch {
+			case err != nil:
+				args = append(args, "outcome", "error", "code", domain.AsError(err).Code)
+			case isToolError(res):
+				args = append(args, "outcome", "tool_error")
+			default:
+				args = append(args, "outcome", "ok")
+			}
+			log.Info("mcp request", args...)
+			return res, err
+		}
+	}
+}
+
+// toolName returns the tool name for a tools/call request, else "".
+func toolName(req mcp.Request) string {
+	if ctr, ok := req.(*mcp.CallToolRequest); ok && ctr.Params != nil {
+		return ctr.Params.Name
+	}
+	return ""
+}
+
+// isToolError reports whether res is a tool result that ended in error (the in-band
+// tool-error channel, distinct from a transport/JSON-RPC error).
+func isToolError(res mcp.Result) bool {
+	ctr, ok := res.(*mcp.CallToolResult)
+	return ok && ctr != nil && ctr.IsError
 }
 
 // Serve is the design §6.8 transport switch the cli binds. stdio is the ONLY

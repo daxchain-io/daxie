@@ -77,6 +77,17 @@ potentially a lie.
 | **Secrets as references; memory hygiene** | Secrets in config plaintext / logs / the journal; best-effort wipe, mlock, `RLIMIT_CORE=0` (Unix). |
 | **MCP exclusion boundary** | The agent channel becoming a key-export / policy-mutation / alias-spoofing path (see [agents.md](agents.md)). |
 
+> **Spend limits are native-ETH-denominated.** The per-tx and rolling-24h caps
+> (`max-tx` / `max-day`) count the transaction's **ETH value + gas**, in wei. v1 has
+> no price oracle, so the *amount* of an ERC-20 / ERC-721 / ERC-1155 transfer (or an
+> `approve`) is **not** converted to wei and does **not** count against those caps —
+> a token transfer's gas does, but its token value does not. For tokens the value
+> control is the **destination allowlist** (and the unlimited-approval ceremony): a
+> recipient/spender must be explicitly allowlisted, and once a policy is active a
+> non-allowlisted token destination is denied. Operators moving significant token
+> balances should treat the allowlist — not `max-day` — as the spend bound, and keep
+> it tight.
+
 Admin operations (policy mutation, key export) require the admin passphrase through a
 TTY/stdin/file channel only — **never** a flag value, and never present in an agent
 pod's environment.
