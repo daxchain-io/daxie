@@ -174,12 +174,21 @@ daxie tx wait 0xtxhash... --confirmations 3 --timeout 10m
 daxie tx speedup 0xtxhash...                         # rebroadcast with bumped fees (≥ +12.5% per protocol rules)
 daxie tx speedup 0xtxhash... --max-fee 60gwei
 daxie tx cancel 0xtxhash...                          # replace with 0-value self-send at higher fee
+daxie tx abandon 0xtxhash...                         # void a signed-but-never-broadcast tx; frees its nonce
 daxie tx list --account treasury/payroll             # Daxie-originated txs from the local journal
 # Every tx Daxie signs/broadcasts is recorded in a local journal (hash,
 # from/to, amount, status) — `tx list` reads it with no external deps.
 # Full on-chain history (including inbound) is a later indexer add-on and
 # will be labeled as such.
 ```
+
+**`tx abandon <hash>`** is the operator escape hatch for a transaction that was
+*signed but never broadcast* (a crash or transport exhaustion between signing and
+broadcast): it marks the record failed, releases its policy reservation, and frees
+the nonce for reuse — the only way to stop a stranded signed tx from being
+auto-rebroadcast on the next status/list/send. It refuses a tx that already shows a
+recorded broadcast (use `tx cancel` for a pending tx via RBF). Operator-only — it is
+deliberately not on the MCP agent surface.
 
 **Gas semantics (applies to everything that broadcasts):**
 

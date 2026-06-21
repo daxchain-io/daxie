@@ -195,7 +195,7 @@ non-interactive path, and documented exit codes. The authoritative contract is
 | `account` | `derive` · `alias` · `unalias` · `import` · `use` · `list` · `show` · `export` · `delete` |
 | `keystore` | `change-passphrase` · `info` |
 | `balance` | (ETH / `--token` / `--all`; raw address or ENS arg) |
-| `tx` | `send` · `status` · `wait` · `list` · `speedup` · `cancel` (RBF) |
+| `tx` | `send` · `status` · `wait` · `list` · `speedup` · `cancel` (RBF) · `abandon` |
 | `gas` | (base fee + slow/normal/fast suggestions) |
 | `token` | `info` · `add` · `rename` · `list` · `remove` · `approve` · `allowance` · `revoke` |
 | `nft` | `add` · `alias` · `aliases` · `list` · `show` · `send` |

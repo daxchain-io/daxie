@@ -20,6 +20,12 @@ hardening within the frozen v1.0 contract — none breaks a documented behavior.
 
 ### Added
 
+- **`daxie tx abandon <hash>`:** an operator escape hatch to void a signed-but-never-
+  broadcast transaction — marks it failed, releases its policy reservation, and frees
+  its nonce for reuse (lowering the next-nonce cache so the freed nonce is reused
+  rather than left a gap). The only way to stop a stranded signed tx from being
+  auto-rebroadcast on the next status/list/send; it refuses a tx that already
+  broadcast. Operator-only (not on the MCP agent surface).
 - **`config set` value validation:** out-of-range tuning values are rejected at set
   time with `usage.bad_value` (poll intervals < 100ms, non-positive timeouts/gas
   multipliers, counts < 1) instead of surfacing as a runtime failure.

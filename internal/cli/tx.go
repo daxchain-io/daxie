@@ -53,8 +53,48 @@ func newTxCmd(ctx context.Context, rs *rootState) *cobra.Command {
 		newTxListCmd(ctx, rs),
 		newTxSpeedupCmd(ctx, rs),
 		newTxCancelCmd(ctx, rs),
+		newTxAbandonCmd(ctx, rs),
 	)
 	return cmd
+}
+
+// newTxAbandonCmd is `daxie tx abandon <txhash>` (cli-spec §`daxie tx`, design
+// §5.6): the operator escape hatch for a transaction that was SIGNED but never
+// reached the chain. It marks the record failed, releases its policy reservation,
+// and frees the nonce for reuse — the ONLY way to stop a stranded signed tx from
+// being auto-rebroadcast on the next status/list/send. It refuses a record that
+// shows a recorded broadcast (a broadcast tx may yet mine — use `tx cancel` for
+// that). Operator-only: it is deliberately NOT on the MCP agent surface.
+func newTxAbandonCmd(ctx context.Context, rs *rootState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "abandon <txhash>",
+		Short: "Void a signed-but-never-broadcast transaction (free its nonce)",
+		Long: "Void a transaction that was signed but never broadcast (§5.6 escape\n" +
+			"hatch): mark it failed, release its policy reservation, and free its nonce.\n" +
+			"This is the only way to stop a stranded signed tx from being auto-rebroadcast\n" +
+			"on the next status/list/send. Refuses a tx that already shows a recorded\n" +
+			"broadcast — use `tx cancel` (RBF) for a pending tx.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, closeFn, err := openService(ctx, rs)
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			res, err := svc.AbandonTx(cmd.Context(), domain.LocalCLI(), domain.AbandonRequest{
+				Hash:    args[0],
+				Network: rs.flags.Network,
+				RPC:     rs.flags.RPC,
+			})
+			if err != nil {
+				return err
+			}
+			m := rs.flags.Mode()
+			return render.Result(cmd.OutOrStdout(), m, res, func(w io.Writer) {
+				render.Line(w, m, "abandoned %s (journal %s); nonce freed", res.Hash, res.JournalID)
+			})
+		},
+	}
 }
 
 // gasFlags is the shared gas-override flag group bound by `tx send` and the RBF

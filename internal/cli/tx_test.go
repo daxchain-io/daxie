@@ -63,6 +63,16 @@ func TestTxUnknownSubcommand(t *testing.T) {
 	}
 }
 
+// `tx abandon` requires exactly one <txhash> arg — registered with ExactArgs(1),
+// so the no-arg form is a usage error caught before the service opens (no chain).
+func TestTxAbandonRequiresHash(t *testing.T) {
+	isolateEnv(t)
+	_, _, code := execCLI(t, "tx", "abandon")
+	if code != int(domain.ExitUsage) {
+		t.Fatalf("exit = %d, want %d (USAGE) for `tx abandon` with no hash", code, domain.ExitUsage)
+	}
+}
+
 // Unknown flag on tx send → exit 2 (USAGE), via the Cobra/pflag funnel.
 func TestTxSendUnknownFlag(t *testing.T) {
 	isolateEnv(t)

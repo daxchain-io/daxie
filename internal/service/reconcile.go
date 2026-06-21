@@ -158,8 +158,15 @@ func (s *Service) AbandonTx(ctx context.Context, p domain.Principal, req domain.
 	if rec.ReservationID != "" {
 		_ = s.policy.Release(ctx, rec.ReservationID)
 	}
-	// The nonce is freed implicitly: NextNonce folds only non-failed records, so a
-	// failed record no longer consumes its nonce (§5.6).
+	// Free the nonce for reuse. Marking the record failed drops it from the journal
+	// fold (NextNonce folds only non-failed records, §5.6), but the next-nonce
+	// ACCELERATOR cache still holds it forward — a stale-high cache is maxed in by
+	// NextNonce — which would leave a gap that stalls the next send. ResetCache lowers
+	// the cache to the post-failure journal next under the account lock. Best-effort:
+	// the abandon itself has already succeeded (record failed, reservation released),
+	// and the journal fold remains the correctness guard, so a cache-write blip does
+	// not undo the abandon.
+	_ = s.nonce.ResetCache(ctx, chainID.Uint64(), common.HexToAddress(rec.From), s.cfg.Tx.LockTimeout)
 	return domain.AbandonResult{Hash: req.Hash, JournalID: rec.ID, Abandoned: true}, nil
 }
 

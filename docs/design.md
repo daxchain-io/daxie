@@ -417,7 +417,7 @@ func (s *Service) SignTyped(ctx, p domain.Principal, req domain.SignTypedRequest
 func (s *Service) Verify(ctx, req domain.VerifyRequest) (domain.VerifyResult, error)
 func (s *Service) ResolveENS(ctx, req domain.ENSRequest) (domain.ENSResult, error)
 func (s *Service) Gas(ctx, req domain.GasRequest) (domain.GasResult, error)
-func (s *Service) AbandonTx(ctx, p domain.Principal, req domain.TxRef) (domain.TxResult, error)
+func (s *Service) AbandonTx(ctx, p domain.Principal, req domain.AbandonRequest) (domain.AbandonResult, error)  // daxie tx abandon
 // + daxie contract — five use cases (only ContractSend is privileged):
 func (s *Service) ContractCall(ctx, req domain.ContractCallRequest) (domain.ContractCallResult, error)            // READ; eth_call; never signs
 func (s *Service) ContractSend(ctx, p domain.Principal, req domain.ContractSendRequest, sink domain.EventSink) (domain.TxResult, error) // SIGNS; reuses SendTx's authorize→broadcast→settle path
@@ -2531,8 +2531,10 @@ persisted bytes (tolerating `already known`); (ii) receipt found → advance to
 `seen-on-chain` + reconcile gas (the mined-while-down case, do **not** re-broadcast); (iii)
 `nonce too low` with no receipt for this hash → mark **superseded** (`replaced`), never
 auto-reclaim. Before any rebroadcast it runs the two same-nonce gates (§5.3 rebroadcast
-rule). `service.AbandonTx(hash)` is the operator escape hatch: it voids a
-signed-never-broadcast record (`failed` + `Release()` + nonce freed).
+rule). `service.AbandonTx(hash)` (exposed as `daxie tx abandon`) is the operator escape
+hatch: it voids a signed-never-broadcast record (`failed` + `Release()` + the
+next-nonce cache lowered to the journal next so the freed nonce is reused, not left a
+gap). It refuses a record that already shows a recorded broadcast.
 
 ### 5.7 CLI-wide exit codes (stable, binding)
 

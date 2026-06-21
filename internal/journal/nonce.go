@@ -249,6 +249,39 @@ func (l *Lease) Release() error {
 	return nil
 }
 
+// ResetCache lowers the next-nonce accelerator to the journal-derived next for
+// (chain, addr), under the account lock. It is the §5.6 AbandonTx escape-hatch
+// helper: voiding a signed-never-broadcast record drops it from the journal fold,
+// but the cache still holds the freed nonce FORWARD (NextNonce maxes a stale-high
+// cache in), which would otherwise leave a gap that stalls the next send. Lowering
+// the cache lets the freed nonce be reused. Safe against a concurrent send: the
+// journal fold is the real double-allocation guard, so a concurrently-allocated
+// higher nonce is still preserved via journalNext on the next derivation — this only
+// corrects a stale accelerator, and chainPending is re-maxed in at the next acquire.
+func (m *NonceManager) ResetCache(ctx context.Context, chainID uint64, addr common.Address, lockTimeout time.Duration) error {
+	if err := m.ensureDirs(); err != nil {
+		return err
+	}
+	if lockTimeout <= 0 {
+		lockTimeout = 30 * time.Second
+	}
+	lctx, cancel := context.WithTimeout(ctx, lockTimeout)
+	defer cancel()
+	unlock, err := fsx.Lock(lctx, m.accountLockBase(chainID, addr))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return errJournal(CodeStateLockTimeout, "timed out acquiring the account lock to free the nonce")
+		}
+		return errWrap(CodeStateLockTimeout, "cannot acquire the account lock", err)
+	}
+	defer unlock()
+	journalNext, _, err := m.journalNext(ctx, chainID, addr)
+	if err != nil {
+		return err
+	}
+	return m.writeCache(chainID, addr, journalNext)
+}
+
 // ── nonce cache I/O ───────────────────────────────────────────────────────────
 
 // readCache returns the cached next nonce for (chain, account). A missing cache
