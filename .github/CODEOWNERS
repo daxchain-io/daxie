@@ -1,0 +1,20 @@
+# CODEOWNERS — review routing for daxie.
+#
+# Listed owners are AUTO-REQUESTED as reviewers on any PR that touches their paths.
+# To make review MANDATORY, enable branch protection on `main` with "Require review
+# from Code Owners" (Settings → Branches → branch protection rule). Without that,
+# this file only auto-requests — it does not block a merge.
+#
+# Swap @skthomasjr for a team (e.g. @daxchain-io/maintainers) once one exists.
+
+# Default owner for everything in the repo.
+*                                @skthomasjr
+
+# ── Release-critical surfaces ───────────────────────────────────────────────────
+# Changes here decide WHAT ships and HOW it is built/signed/published. Treat edits
+# to these with extra care (a slip can break or compromise a release).
+/.github/workflows/              @skthomasjr
+/.goreleaser.yml                 @skthomasjr
+/scripts/                        @skthomasjr
+/.github/dependabot.yml          @skthomasjr
+/Dockerfile.release              @skthomasjr
