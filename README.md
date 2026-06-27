@@ -60,7 +60,7 @@ Four supported paths. **Verify before you run** (see [docs/install.md](docs/inst
 for the download-verify-run recipe and cosign signature verification).
 
 > The *floating* install channels — Homebrew, the `curl | sh` `/releases/latest`
-> URL, the `:latest` and `:1.0` Docker tags, and `go install` with `@latest` —
+> URL, the `:latest` and `:X.Y` Docker tags, and `go install` with `@latest` —
 > track the **stable** channel: they resolve to the latest stable release and a
 > prerelease never moves them. Pin an exact version or image digest in production.
 
@@ -93,9 +93,9 @@ to `~/.local/bin` (no sudo). Flags and `DAXIE_INSTALL_*` env vars are documented
 ### Container image (GHCR)
 
 ```sh
-VERSION=1.1.0
-docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
-docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
+# :1.1 floats to the latest 1.1.x stable. Pin an exact :X.Y.Z or an @sha256 digest in production.
+docker pull ghcr.io/daxchain-io/images/daxie:1.1
+docker run --rm ghcr.io/daxchain-io/images/daxie:1.1 version
 ```
 
 Multi-arch (amd64 + arm64), **distroless/static, non-root (uid 65532)**, no shell,

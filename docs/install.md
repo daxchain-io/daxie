@@ -144,9 +144,9 @@ is always a hard failure.
 ## Container image (GHCR)
 
 ```sh
-VERSION=1.1.0
-docker pull "ghcr.io/daxchain-io/images/daxie:${VERSION}"
-docker run --rm "ghcr.io/daxchain-io/images/daxie:${VERSION}" version
+# :1.1 floats to the latest 1.1.x stable. Pin an exact :X.Y.Z or an @sha256 digest in production.
+docker pull ghcr.io/daxchain-io/images/daxie:1.1
+docker run --rm ghcr.io/daxchain-io/images/daxie:1.1 version
 ```
 
 Tags: an immutable `:X.Y.Z` per release; floating `:X.Y` and `:latest` track the
