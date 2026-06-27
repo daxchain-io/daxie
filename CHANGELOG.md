@@ -15,6 +15,14 @@ first beta — agents could integrate early.
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-06-27
+
+### Changed
+
+- **Documentation:** a one-line install (Homebrew / `curl | sh`) now appears near the
+  top of the README, and the container-image examples use the floating `:1.1` tag
+  (current within the stable line, no per-patch churn) with a production-pinning note.
+
 ## [1.1.1] — 2026-06-21
 
 ### Changed
@@ -232,7 +240,8 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   `internal/version`, and the `version`/`completion`/`config`/`convert` commands; the
   goreleaser snapshot build and the CI matrix from day one.
 
-[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/daxchain-io/daxie/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/daxchain-io/daxie/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0-rc.1...v1.0.0
