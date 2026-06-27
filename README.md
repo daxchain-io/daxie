@@ -19,6 +19,15 @@ one-core/two-frontends architecture so the CLI and the MCP server traverse the
 > the v2 signer-daemon path. Use a testnet and a small mainnet float while you
 > evaluate.
 
+**Install** — Homebrew or `curl | sh` (both verify the download; the full set of
+paths and verification recipes is under [Install](#install)):
+
+```sh
+brew install --cask daxchain-io/tap/daxie
+# or:
+curl -fsSL https://github.com/daxchain-io/daxie/releases/latest/download/install.sh | sh
+```
+
 ---
 
 ## What is Daxie?
