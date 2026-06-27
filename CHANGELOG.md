@@ -15,6 +15,15 @@ first beta — agents could integrate early.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-06-21
+
+### Changed
+
+- **Dependency maintenance** (no code change): go-ethereum 1.17.3 → 1.17.4,
+  golang.org/x/crypto 0.47 → 0.48, golang.org/x/text 0.33 → 0.34, golang.org/x/term
+  0.39 → 0.40, github.com/pelletier/go-toml/v2 2.4.0 → 2.4.2 (the grouped
+  dependabot bump); CI `actions/setup-go` 6.4.0 → 6.5.0. `govulncheck` clean.
+
 ## [1.1.0] — 2026-06-21
 
 Adds the `daxie tx abandon` command plus post-v1.0.0 hardening, robustness, and
@@ -223,7 +232,8 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   `internal/version`, and the `version`/`completion`/`config`/`convert` commands; the
   goreleaser snapshot build and the CI matrix from day one.
 
-[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/daxchain-io/daxie/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/daxchain-io/daxie/compare/v0.11.0...v1.0.0-rc.1
