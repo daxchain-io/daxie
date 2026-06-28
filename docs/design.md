@@ -217,8 +217,7 @@ internal/
                       ClassifySelector (the §4.2 raw-calldata recognizer source).
   version/            ldflags vars (Version, Commit, Date).
 
-docs/deploy/          Example Compose + K8s manifests (Helm chart arrives with the
-                      HTTP transport, v1.1).
+docs/deploy/          Example Compose + K8s manifests for the four state classes.
 .goreleaser.yml, scripts/install.sh, Dockerfile.release, .github/workflows/
 ```
 
@@ -909,7 +908,7 @@ change:
 | **Auth on the HTTP transport** | A `PrincipalFunc(r *http.Request) (domain.Principal, error)` wired as middleware (empty chain in v1). It fills the `Principal` already threaded through every method. | Every `service` signature already takes `Principal`. Zero new params. |
 | **Signer daemon / privilege boundary** (v2) | New `internal/remotesigner` implements `domain.Signer` over HTTPS; a remote-policy adapter stands in for `policy.Engine`'s call sites; `service.Open` wires both when `opts.AuthorizerURL != ""`. | The concrete `authorize` sequence and its call sites; counters, journal-before-broadcast, sign — all already behind the boundary. |
 | **KMS / hardware signer** | New `domain.Signer` impl with a no-op `Unlocker`; `service.Open` selects by config. | `SignTx`/`SignHash` callers; the keystore stays a peer impl. |
-| **Helm chart as wallet/signing service** | Ships with the HTTP transport; pod runs `daxie mcp serve --transport http`; chart bakes the non-negotiable defaults (authn, default-deny NetworkPolicy, no Ingress, non-root/read-only-rootfs, PVC/Secret per state class). | The binary, the four-state-class model, the SIGTERM-resumable lifecycle. |
+| **Standalone signing-service deployment** | Ships with the HTTP transport; pod runs `daxie mcp serve --transport http` with the non-negotiable defaults (authn, default-deny NetworkPolicy, no Ingress, non-root/read-only-rootfs, PVC/Secret per state class), provided as hardened example manifests. | The binary, the four-state-class model, the SIGTERM-resumable lifecycle. |
 | **RPC failover / priority ordering** | `ChainProvider` gains ordered endpoints; `Dial` is already per-endpoint. | `chain.Client`; every caller. |
 | **Indexer-backed history / discovery** | New `Discovery` interface behind registry reads; `journal.List` stays the local-tx source. | The concrete registry; the interfaces designed as seams now. |
 
@@ -3898,8 +3897,8 @@ key/passphrase-extracting tools exist; tool-call flooding is bounded by the spen
 limits (per-call rate limiting is the future policy engine); malformed args hit the SDK's
 JSON-schema validation + the same core validation the CLI feeds; repointing state paths via
 launch env tracks the trusted-harness precondition (§8.3 item 5). v1.1 HTTP transport:
-reserved auth hooks from day one; chart defaults bearer/mTLS + default-deny NetworkPolicy,
-no Ingress.
+reserved auth hooks from day one; the deployment defaults to bearer/mTLS + default-deny
+NetworkPolicy, no Ingress.
 
 **T7 — Supply-chain attack on the binary.** cosign-signed binaries + SHA256 checksums on
 every release; cosign-signed multi-arch OCI images; `install.sh` verifies SHA256 by
@@ -3965,8 +3964,8 @@ chains that ignore EIP-155 (pre-155 chains are not in the preset list).
 ### 8.6 Residual risks, ranked
 
 For each: does the **v2 signer daemon** (keys + policy + counters behind a privilege
-boundary — separate uid/daemon locally, separate pod via `mcp serve --transport http` +
-Helm in K8s, agents holding only an access credential) close it?
+boundary — separate uid/daemon locally, separate pod via `mcp serve --transport http`
+in K8s, agents holding only an access credential) close it?
 
 | Rank | Sev | Residual | v1 state | v2 daemon? |
 |---|---|---|---|---|
@@ -3984,7 +3983,7 @@ Helm in K8s, agents holding only an access credential) close it?
 
 **Reading for the v1 milestone:** R1–R3 — the three worst — are exactly the ones the
 signer-daemon boundary eliminates, which is why requirements §7a names it the v2 hardening
-path and why the v1.1 HTTP transport + Helm chart is sequenced as the first post-v1
+path and why the v1.1 HTTP transport is sequenced as the first post-v1
 milestone. Two things make v1's posture stronger than a naive read suggests: (1) the policy
 trust root is a **config-class anchor outside Viper**, so on K8s it is structurally beyond
 the agent's reach and rollback is **prevented** (watermark), not merely detected; (2) the
@@ -4022,10 +4021,9 @@ list).
 | OCI image | `ghcr.io/daxchain-io/images/daxie`, multi-arch via goreleaser **`dockers_v2:`** (the v3-default successor, not the deprecated `dockers:`/`docker_manifests:`), base `gcr.io/distroless/static-debian12:nonroot` (digest-pinned), cosign-signed manifest via the shared top-level `docker_signs:` |
 | Installer | `scripts/install.sh` published as a release asset; envs under **`DAXIE_INSTALL_*`** (a sub-namespace, never bare `DAXIE_*`, §9.4) |
 | Channels | `stable` = `vX.Y.Z`; `beta` = `vX.Y.Z-beta.N`/`-rc.N`. Brew, `:latest`, `:X.Y` track stable only |
-| CI | `ci.yml`, `ci-install-script.yml`, `release.yml` (+ `release-helm.yml` reserved for v1.1) |
+| CI | `ci.yml`, `ci-install-script.yml`, `release.yml` |
 | Secrets | exactly **one** repo secret: `HOMEBREW_TAP_GITHUB_TOKEN` |
 | Windows | release archives (zip) only in v1; scoop/winget later; install.sh exits 2 on Windows |
-| Helm | deferred to v1.1 with the HTTP transport (§7a); workflow name reserved |
 
 ### 9.2 Versioning policy & channels
 
@@ -4279,8 +4277,8 @@ All `contract` verbs and their flags (`--abi`/`--abi-stdin`, `--sig`, `--value`,
 The post-v1 roadmap lives in **GitHub milestones and issues**, not this document — each
 item still "waits for a trigger, not a date":
 
-- **v1.1** — streamable HTTP MCP transport, Helm chart (`charts/daxie`), registry-mutation
-  MCP tools: [milestone](https://github.com/daxchain-io/daxie/milestone/1)
+- **v1.1** — streamable HTTP MCP transport, registry-mutation MCP tools:
+  [milestone](https://github.com/daxchain-io/daxie/milestone/1)
 - **v2** — the signer-daemon privilege boundary (closes residuals R1/R2/R2a/R3/R8):
   [milestone](https://github.com/daxchain-io/daxie/milestone/2)
 - **Backlog** — trigger-gated items (indexer discovery/history, hardware wallets, RPC

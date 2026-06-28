@@ -11,12 +11,13 @@ sourcing to your cluster.
 | [kubernetes.md](kubernetes.md) + [k8s/](k8s/) | Kubernetes manifests: Deployment, ConfigMap, Secret, PVC |
 | [policy-k8s.md](policy-k8s.md) | The policy runbook: two-domain write ordering, the passphrase-free canary, zero-outage admin-passphrase rotation |
 
-> **Helm chart: v1.1.** A `charts/daxie` Helm chart ships in **v1.1** alongside the
-> HTTP MCP transport (`mcp serve --transport http`). With stdio-only v1 there is no
-> standalone service to chart — the agent launches `daxie mcp serve` as a subprocess —
-> so v1 ships these **example manifests only**. The chart will deploy Daxie as a
-> wallet/signing service (keys in the Daxie pod, agents holding only a credential — the
-> signer-daemon privilege boundary). See [design.md §7a / §10.3](../design.md).
+> **v1 is stdio-only — these are example manifests, not a packaged chart.** With the
+> stdio transport there is no standalone service to deploy on its own: the agent
+> launches `daxie mcp serve` as a subprocess, so Daxie's bits fold into the agent's
+> own pod. A standalone **wallet/signing-service** deployment (keys in the Daxie pod,
+> agents holding only a credential — the signer-daemon privilege boundary) arrives with
+> the **v1.1 HTTP MCP transport** (`mcp serve --transport http`), shipped as hardened
+> example manifests. See [design.md §7a / §10.3](../design.md).
 
 ---
 

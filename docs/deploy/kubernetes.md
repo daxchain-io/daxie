@@ -10,11 +10,11 @@ the four state classes by durability and writability. They live in [`k8s/`](k8s/
 | [`k8s/pvc.yaml`](k8s/pvc.yaml) | **state** — durable spend counters, journal, nonces |
 | [`k8s/deployment.yaml`](k8s/deployment.yaml) | the pod: hardened `securityContext`, the four mounts |
 
-> **Helm chart: v1.1.** These are example manifests for v1's stdio transport. The
-> packaged `charts/daxie` Helm chart arrives in **v1.1** with the HTTP MCP transport
-> (`mcp serve --transport http`), where Daxie runs as a standalone signing service
-> (keys in the Daxie pod, agents holding only a credential). See
-> [README.md](README.md) and [design.md §10.3](../design.md).
+> **Example manifests (v1, stdio transport).** A standalone signing-service
+> deployment — Daxie running as a long-lived service, keys in the pod, agents holding
+> only a credential — arrives with the **v1.1 HTTP MCP transport**
+> (`mcp serve --transport http`). See [README.md](README.md) and
+> [design.md §10.3](../design.md).
 
 ---
 

@@ -11,7 +11,7 @@ job, kept here in one place.
 > **Stdio transport (v1).** The MCP server speaks **stdio**, so the agent process is
 > the MCP *client* and typically launches `daxie mcp serve` as a subprocess. The
 > standalone-service pattern (a long-lived Daxie container an agent connects to over
-> the network) arrives with the **v1.1 HTTP transport** and the Helm chart. The
+> the network) arrives with the **v1.1 HTTP transport**. The
 > Compose example below shows the wallet container holding state durably and an agent
 > container that mounts the binary / shares the keystore; adapt to your harness.
 

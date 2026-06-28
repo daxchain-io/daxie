@@ -326,7 +326,7 @@ goreleaser release --snapshot --clean --skip=sbom,sign
 | [docs/configuration.md](docs/configuration.md) | `config.toml`, `DAXIE_*` env vars, the four state classes |
 | [docs/agents.md](docs/agents.md) | Deploying Daxie behind an agent: MCP, the tool surface, unattended secrets |
 | [docs/security.md](docs/security.md) | Operator-facing threat model + the ranked residuals |
-| [docs/deploy/](docs/deploy/) | Docker Compose + Kubernetes manifests (Helm chart ships in v1.1) |
+| [docs/deploy/](docs/deploy/) | Docker Compose + Kubernetes manifests (config / keystore / state / cache) |
 | [docs/cli-spec.md](docs/cli-spec.md) | The authoritative command/flag/exit-code contract |
 | [docs/design.md](docs/design.md) | The canonical design (the law) |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

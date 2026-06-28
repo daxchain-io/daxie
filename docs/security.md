@@ -147,7 +147,7 @@ hidden.
 | **R10** | Medium | Novel-selector blind spot in the calldata classifier (a proxy/diamond dispatch or future fund-moving selector not in the v1 recognizer set) | **Caught, not silently passed:** the unknown-calldata gate is deny-by-default once policy is active — the residual is *capability* (operator must allowlist the contract/triple), not a *bypass* | **Not closed** by the boundary; closed by growing the recognizer set + the fuller policy engine |
 
 **Reading for v1 operators:** R1–R3 — the three worst — are exactly the ones the v2
-signer-daemon boundary eliminates, which is why the v1.1 HTTP transport + Helm chart is
+signer-daemon boundary eliminates, which is why the v1.1 HTTP transport is
 sequenced as the first post-v1 milestone. v1's claim is deliberately scoped: an agent
 with a general shell is host-compromised by this model's own definition, so the
 anchor's tamper-prevention guarantee protects **tool-sandboxed** agents (an executor
