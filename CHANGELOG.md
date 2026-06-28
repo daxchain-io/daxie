@@ -15,6 +15,18 @@ first beta — agents could integrate early.
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-06-27
+
+### Changed
+
+- **Documentation & repo housekeeping (no code change — the binary is byte-for-byte
+  identical to 1.1.2):** the forward-looking roadmap moved out of the docs into GitHub
+  milestones and `roadmap`-labeled issues, surfaced by a new README **Roadmap** section;
+  the plan-style `docs/requirements.md` design prompt was retired (preserved in git
+  history); the Helm chart was dropped as a planned deliverable (it presupposes the v1.1
+  HTTP MCP transport — under the v1 stdio transport there is no standalone service to
+  chart); and a `CODEOWNERS` file now routes review of release-critical paths.
+
 ## [1.1.2] — 2026-06-27
 
 ### Changed
@@ -240,7 +252,8 @@ no wallet behavior over `v0.11.0` — it ships the M0–M11 binary safely and do
   `internal/version`, and the `version`/`completion`/`config`/`convert` commands; the
   goreleaser snapshot build and the CI matrix from day one.
 
-[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/daxchain-io/daxie/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/daxchain-io/daxie/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/daxchain-io/daxie/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/daxchain-io/daxie/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/daxchain-io/daxie/compare/v1.0.0...v1.1.0
