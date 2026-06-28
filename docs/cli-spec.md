@@ -1,9 +1,10 @@
 # Daxie — CLI Command Surface (v1.0)
 
 > **Status:** the authoritative v1.0 command/flag/exit-code contract — frozen and
-> semver-protected (see [README versioning](../README.md#versioning)). Companion to
-> [requirements.md](requirements.md); the canonical design is [design.md](design.md).
-> For exact flag spelling, `daxie <command> --help` matches this surface.
+> semver-protected (see [README versioning](../README.md#versioning)). The canonical
+> design is [design.md](design.md); operating details are in
+> [configuration.md](configuration.md). For exact flag spelling,
+> `daxie <command> --help` matches this surface.
 
 ---
 
@@ -81,7 +82,7 @@ Paths follow XDG conventions locally and are independently overridable
 (`DAXIE_CONFIG`, `DAXIE_KEYSTORE`, `DAXIE_STATE_DIR`, `DAXIE_CACHE_DIR`) so
 config can be a read-only ConfigMap, the keystore a Secret mount, and
 mutable state (journal/nonces/spend counters) a persistent volume — see
-requirements.md §7a for container/Kubernetes deployment semantics.
+[docs/deploy/](deploy/) and design.md §7a for container/Kubernetes semantics.
 
 ### `daxie wallet` — HD wallet (mnemonic) management
 

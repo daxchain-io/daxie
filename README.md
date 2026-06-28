@@ -329,7 +329,6 @@ goreleaser release --snapshot --clean --skip=sbom,sign
 | [docs/deploy/](docs/deploy/) | Docker Compose + Kubernetes manifests (Helm chart ships in v1.1) |
 | [docs/cli-spec.md](docs/cli-spec.md) | The authoritative command/flag/exit-code contract |
 | [docs/design.md](docs/design.md) | The canonical design (the law) |
-| [docs/requirements.md](docs/requirements.md) | Requirements |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 Architecture in one line: **one core (`internal/service`), two thin frontends

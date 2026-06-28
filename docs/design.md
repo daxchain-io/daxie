@@ -7,10 +7,10 @@
 > data, the threat model, the release/CI pipeline, and the v1 milestone cut.
 >
 > **Inputs.** This document is bound by two specifications it does **not** restate
-> in full and never contradicts: [`docs/requirements.md`](requirements.md) (the
-> 29 resolved `[DECIDED]` items + the Open Questions Log) and
-> [`docs/cli-spec.md`](cli-spec.md) (the v1 command tree, the account-reference
-> grammar, and the JSON/exit-code output contract). Where requirements delegated a
+> in full and never contradicts: the original requirements prompt (the 29 resolved
+> `[DECIDED]` items + the Open Questions Log) — `docs/requirements.md`, **retired when
+> v1.0 shipped and preserved in git history** — and [`docs/cli-spec.md`](cli-spec.md)
+> (the v1 command tree, the account-reference grammar, and the JSON/exit-code contract). Where requirements delegated a
 > detail to the design session (default timeouts, per-network confirmation counts,
 > ETH-arrival detection, `--amount` semantics, secret-input precedence, KDF
 > parameters, the seal construction), this document **decides it**, with the
@@ -4274,34 +4274,21 @@ milestone).
 
 All `contract` verbs and their flags (`--abi`/`--abi-stdin`, `--sig`, `--value`, `--block`, `--from` on `call`, `--from-block`/`--arg` on `logs`, and the full `tx send` gas/wait flag set on `send`) land **together in M10** — the noun's codec, classifier, and registry are co-built, so there is no dead-flag staging within `contract`.
 
-### 10.3 Deferred past v1 — each with its trigger
+### 10.3 Deferred past v1
 
-**v1.1 (committed fast-follow):** **HTTP MCP transport** (`mcp serve --transport http`,
-streamable HTTP, auth hooks) — trigger v1.0 GA; M10's transport-agnostic layer + reserved
-`Authenticator`/`Principal` seam make it additive only. **Helm chart** (`charts/daxie`,
-OCI-published, hardened defaults per §7a) — hard-gated on the HTTP transport (with stdio
-there is no standalone service to chart); deploys Daxie as a wallet/signing service (keys in
-the Daxie pod, agents holding only a credential — the signer-daemon privilege boundary).
+The post-v1 roadmap lives in **GitHub milestones and issues**, not this document — each
+item still "waits for a trigger, not a date":
 
-**Later (each waits for its trigger, not a date):**
+- **v1.1** — streamable HTTP MCP transport, Helm chart (`charts/daxie`), registry-mutation
+  MCP tools: [milestone](https://github.com/daxchain-io/daxie/milestone/1)
+- **v2** — the signer-daemon privilege boundary (closes residuals R1/R2/R2a/R3/R8):
+  [milestone](https://github.com/daxchain-io/daxie/milestone/2)
+- **Backlog** — trigger-gated items (indexer discovery/history, hardware wallets, RPC
+  failover, profiles, `${keychain:}`, scoop/winget, blob tx, rich NFT metadata, WebSocket
+  `receive`, per-asset limits closing R6, the fuller policy engine closing R5, …):
+  [`roadmap` issues](https://github.com/daxchain-io/daxie/issues?q=is%3Aissue+label%3Aroadmap)
 
-| Item | Trigger |
-|---|---|
-| Indexer-based discovery ("what does this address hold?") | The M5 registry sits behind `Discovery`. Activate when users can't pre-register what they hold (recurring issue volume) + a first provider integration is chosen |
-| Full tx history (inbound + pre-Daxie txs in `tx list`) | Indexer interface landed; until then `tx list` stays labeled journal-only |
-| Hardware wallets (Ledger/Trezor) | `domain.Signer` stable through v1.0 with zero breaking changes + a validated pure-Go HID path (`CGO_ENABLED=0` non-negotiable) + CLI-human demand |
-| RPC auto-failover | A design pass producing idempotent broadcast semantics (journal-keyed dedupe across endpoints); the endpoint model already reserves priority ordering |
-| Profiles (`--profile` wallet+network+RPC bundles) | Observed friction switching the trio together; the config schema reserves a `profiles` table |
-| `${keychain:…}` secret source | A validated CGO-free per-OS implementation that keeps static builds |
-| scoop/winget manifests | Meaningful Windows download share or direct requests; archives serve Windows from v1.0 |
-| Testnet faucet integration | A stable provider-neutral key-free faucet API (decided deferral); until then `docs/` lists manual faucet URLs |
-| Blob transactions (EIP-4844/7594) | A concrete agent use case posting blob data; requires extending the gas model — out of v1 scope |
-| Rich NFT metadata (`tokenURI`, IPFS, image render) | Demand on `nft show`; requires an IPFS-gateway privacy decision; a nice-to-have in requirements §2 |
-| WebSocket subscription upgrade for `receive` | First `wss://` endpoint support in `rpc add`; the `chain.SubscribeNewHead` seam already exists, polling remains the fallback |
-| `contract_add`/`contract_remove`/registry-mutation MCP tools | The registry-add anti-spoof boundary (§6.1) defers `*_add` to v1.1 behind per-principal policy; `contract` registry mutation rides the same trigger. Raw-0x + `--abi`/`--sig` covers the agent transact path meanwhile |
-| Richer ABI-arg ergonomics: nested-tuple/multidim-array literals beyond the v1 form; named-arg syntax; per-param decimal hints | v1 ships positional string args coerced by the ABI with array/tuple literals (L13); trigger = observed friction on real non-standard ABIs (governance/vault structs) |
-| `contract simulate`/trace (state-diff, `debug_traceCall`, multicall batching) | Requires `trace_*`/`debug_*` RPC the shipped public endpoints lack (same constraint §5.8 notes for `receive`); trigger = a `trace`-capable endpoint class in `rpc add` + agent demand for pre-flight beyond `--dry-run` |
-| Per-wallet passphrases; fuller policy engine; remote signers (KMS/4337); **the signer-daemon privilege boundary** | Named future layers (requirements §5/§7a). **Per-asset limits** are the specific trigger that closes the v1 ETH-only limit-denomination gap (R6). The **signer-daemon boundary is the v2 hardening path** that closes the spend-counter tamper gap (R2); its first concrete form is the v1.1 HTTP-transport wallet-service deployment |
+The original per-item trigger table is preserved in this file's git history.
 
 ---
 
