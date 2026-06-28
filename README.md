@@ -317,6 +317,24 @@ goreleaser release --snapshot --clean --skip=sbom,sign
 
 ---
 
+## Roadmap
+
+The roadmap lives in GitHub issues (label
+[`roadmap`](https://github.com/daxchain-io/daxie/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap)),
+grouped by milestone:
+
+- **[v1.1](https://github.com/daxchain-io/daxie/milestone/1):** streamable HTTP MCP
+  transport · registry-mutation MCP tools (`contract_add`, `token_add`, …)
+- **[v2](https://github.com/daxchain-io/daxie/milestone/2):** the signer daemon — keys
+  behind a privilege boundary, agents holding only a revocable credential
+- **Backlog:** indexer-backed discovery + full history · WebSocket `receive` · plus the
+  trigger-gated [backlog tracker](https://github.com/daxchain-io/daxie/issues/33)
+
+Arbitrary contract calls (`contract send` with on-chain calldata classification) and the
+sealed two-passphrase policy engine shipped in v1 — see the command surface above.
+
+---
+
 ## Documentation
 
 | Doc | What |
